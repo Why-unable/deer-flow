@@ -1,13 +1,15 @@
 ---
 name: local-deep-research
-description: 当研究任务应主要基于本地知识库时使用此 skill。遇到宽泛研究主题、"what is X"、"explain X"、"compare X and Y"、"research X"、"investigate X"，或在生成内容前需要以本地文档作为主要证据来源时触发。使用 web_search 或 web_fetch 前，优先使用 rag_search、rag_get_document、rag_get_document_preview、rag_get_document_chunks 和 rag_get_document_assets。
+description: 当用户需要基于本地知识库回答一个具体问题、解释一个主题、分析某个概念/系统/文档集，或生成基于本地证据的普通研究回答时使用此 skill。优先使用 rag_search、rag_get_document、rag_get_document_preview、rag_get_document_chunks 和 rag_get_document_assets。若用户明确要求系统性文献综述、survey、annotated bibliography、多篇论文/报告的跨文档方法比较、纳入/排除筛选或证据矩阵，应改用 local-systematic-literature-review。
 ---
 
 # 本地深度研究 Skill
 
 ## 概览
 
-当本地文档应作为主要事实来源时，此 skill 提供一套系统化方法，用于开展基于本地知识库的充分研究。**在开始任何研究密集型回答或内容生成任务前，先加载此 skill**。
+当本地文档应作为主要事实来源时，此 skill 提供一套系统化方法，用于开展基于本地知识库的充分研究。**在开始普通本地深度研究回答或内容生成任务前，先加载此 skill**。
+
+如果用户明确要求系统性文献综述、survey、annotated bibliography、多篇论文/报告的跨文档方法比较、纳入/排除筛选或证据矩阵，应使用 `local-systematic-literature-review`，而不是此 skill。
 
 它借鉴了深度网页研究的深度和多角度结构，但调整了证据优先级：
 
@@ -27,6 +29,7 @@ description: 当研究任务应主要基于本地知识库时使用此 skill。�
 - 用户明确要求搜索本地知识库
 - 回答应基于已上传或已索引的 PDF/文档内容
 - 单次检索查询不足以给出合适回答
+- 任务重点是回答一个具体问题，而不是构建多文档综述集合
 
 ### 基于本地来源的内容生成
 
@@ -35,7 +38,22 @@ description: 当研究任务应主要基于本地知识库时使用此 skill。�
 - 从已索引 PDF 中提取需求、架构说明、风险或实现细节
 - 任何必须可追溯到本地证据的内容
 
+### 不使用此 Skill 的情况
+
+- 用户要求“系统性文献综述”“literature review”“survey”“annotated bibliography”“SLR”。
+- 用户要求比较多篇本地论文、报告、标准或白皮书的方法、发现、局限。
+- 用户要求建立纳入/排除标准、候选文档矩阵、证据矩阵或跨文档主题综合。
+- 用户的目标是形成多文档综述报告，而不是回答一个具体研究问题。
+
+以上情况使用 `local-systematic-literature-review`。
+
 ## 核心原则
+
+### 本地路径禁用规则
+
+本地知识库文档内容只能通过 `rag_*` 工具读取。允许使用的读取路径是：`rag_search`、`rag_list_documents`、`rag_get_document`、`rag_get_document_preview`、`rag_get_document_chunks`、`rag_get_document_assets` 和 `rag_list_collections`。
+
+禁止把 MMKB 返回的 `input_file_path`、`markdown_merged_path`、`markdown_image_dir_path`、`md_asset_base`、`image_abs` 或任何 `/home/.../storage/...`、`documents/.../markdown/...` 一类路径交给 `grep`、`read_file`、`bash`、`ls` 等文件/命令工具。那些路径是 MMKB 服务端元数据或 URL 线索，不是 DeerFlow sandbox 内可读文件。需要正文时用 `rag_get_document_preview` 或 `rag_get_document_chunks`；需要图片时用 `rag_get_document_assets` 或 `rag_search` 返回的 `image_url`。
 
 **当用户请求可以从本地知识库回答时，绝不要把通用知识或网页片段当作主要来源。**
 

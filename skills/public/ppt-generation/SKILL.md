@@ -17,6 +17,41 @@ This skill generates professional PowerPoint presentations by creating AI-genera
 - Maintain visual consistency by using previous slide as reference image
 - Compose images into a professional PPTX file
 
+## Multi-Turn Planning and Context Rules
+
+Presentation creation can be a multi-turn, user-guided workflow. Do not force
+plan creation, all slide image generation, and final PPTX composition into the
+same response when the user is still reviewing or refining the plan.
+
+- When you create a presentation plan, save the plan JSON under
+  `/mnt/user-data/workspace/`, and also include the complete plan JSON in the
+  assistant response body inside a fenced `json` block.
+- Also include a concise human-readable outline when useful, especially when the
+  user is expected to review the plan before generation.
+- Intermediate content that can reasonably fit in the chat response should be
+  shown in the response, not only saved to files. The final PPTX itself is the
+  exception and should be shared through `present_files`.
+- Do not rely on plan files created in previous turns. Some external chat
+  frontends provide full text history but do not preserve DeerFlow thread IDs, so
+  `/mnt/user-data/workspace/` may point to a new thread directory on the next
+  request.
+- If the user asks you to use a previously saved plan, but the current
+  conversation context does not include the complete plan JSON and only contains
+  text such as "the plan file has been saved", do not pretend that you can read
+  the old file. Ask the user to paste the complete plan JSON, or offer to
+  regenerate the plan.
+- If the current conversation context contains a complete plan JSON, recreate
+  the plan file in the current `/mnt/user-data/workspace/` directory before
+  generating slide images or composing the PPTX.
+
+## Local Knowledge Source Rules
+
+When the presentation should be based on a local knowledge base, local
+documents, uploaded documents, or MMKB content, first use the available
+knowledge/RAG tools to gather source material before creating the plan. Prefer
+local evidence over unsupported general knowledge, and carry concise local
+citations or document references into the outline and plan when relevant.
+
 ## Presentation Styles
 
 Choose one of the following styles when creating the presentation plan:
@@ -48,6 +83,11 @@ When a user requests presentation generation, identify:
 ### Step 2: Create Presentation Plan
 
 Create a JSON file in `/mnt/user-data/workspace/` with the presentation structure. **Important**: Include the `style` field to define the overall visual consistency.
+
+Also include the complete plan JSON in the assistant response body. If the user
+is asking for planning or review, stop after presenting the outline and complete
+plan JSON, then wait for the user to approve or request revisions before
+generating slide images.
 
 ```json
 {
@@ -418,6 +458,8 @@ After generation:
 - Also share the individual slide images if requested
 - Provide brief description of the presentation
 - Offer to iterate or regenerate specific slides if needed
+- For planning-only or intermediate turns, include the complete plan JSON in the
+  assistant response body even if it was also saved to `/mnt/user-data/workspace/`
 
 ## Notes
 

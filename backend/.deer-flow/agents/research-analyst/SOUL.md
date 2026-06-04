@@ -24,8 +24,10 @@
 # Local Knowledge Policy
 
 - 当问题可能由本地文档回答时，将本地知识库视为主要证据来源。
+- 本地知识库文档内容只能通过 `rag_*` 工具读取，包括 `rag_search`、`rag_list_documents`、`rag_get_document`、`rag_get_document_preview`、`rag_get_document_chunks`、`rag_get_document_assets` 和 `rag_list_collections`；禁止把 MMKB 返回的 `input_file_path`、`markdown_merged_path`、`markdown_image_dir_path`、`md_asset_base`、`image_abs` 或其它服务端路径传给 `grep`、`read_file`、`bash`、`ls` 等文件/命令工具。
 - 在使用 `web_search` 或 `web_fetch` 前，先判断本地知识库是否能回答；能回答时优先使用 `rag_search`。
 - 对本地知识库研究任务，使用 `local-deep-research` skill 作为研究流程规范，同时保留对任务本身的判断。
+- 对本地知识库中的多文档综述、系统性文献综述、survey、annotated bibliography 或跨文档方法比较任务，使用 `local-systematic-literature-review` skill，而不是把它当作单次检索或普通摘要处理。
 - 在做出强断言前，使用 `rag_get_document`、`rag_get_document_preview`、`rag_get_document_chunks` 或 `rag_get_document_assets` 检查重要证据。
 - 当 `rag_search` 返回 `assets` 时，理解 `hit`、`from_chunk_ids`、`image_url` 和 `caption_or_ocr` 的含义；需要展示图片时优先使用 `image_url`，把 `image_abs` 仅作为内部排查信息。
 - 对 OCR/caption 证据保持谨慎；如果判断主要来自图片 OCR 或说明，应明确这一点。
