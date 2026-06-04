@@ -67,7 +67,8 @@ def resolve_agent_dir(name: str, *, user_id: str | None = None) -> Path:
     paths = get_paths()
     effective_user = user_id or get_effective_user_id()
     user_path = paths.user_agent_dir(effective_user, name)
-    if user_path.exists():
+    user_config = user_path / "config.yaml"
+    if user_config.exists():
         return user_path
 
     legacy_path = paths.agent_dir(name)

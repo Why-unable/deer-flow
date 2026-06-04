@@ -141,6 +141,19 @@ class TestLoadAgentConfig:
             with pytest.raises(FileNotFoundError):
                 load_agent_config("broken-agent")
 
+    def test_user_memory_only_dir_falls_back_to_legacy_agent_config(self, tmp_path):
+        _write_agent(tmp_path, "research-analyst", {"name": "research-analyst", "description": "shared"})
+        user_agent_dir = tmp_path / "users" / "mmkb-workspace-user" / "agents" / "research-analyst"
+        user_agent_dir.mkdir(parents=True)
+        (user_agent_dir / "memory.json").write_text("{}", encoding="utf-8")
+
+        with patch("deerflow.config.agents_config.get_paths", return_value=_make_paths(tmp_path)):
+            from deerflow.config.agents_config import load_agent_config
+
+            cfg = load_agent_config("research-analyst", user_id="mmkb-workspace-user")
+
+        assert cfg.description == "shared"
+
     def test_load_config_infers_name_from_dir(self, tmp_path):
         """Config without 'name' field should use directory name."""
         agent_dir = tmp_path / "agents" / "inferred-name"
@@ -218,6 +231,20 @@ class TestLoadAgentSoul:
 
             cfg = AgentConfig(name="code-reviewer")
             soul = load_agent_soul(cfg.name)
+
+        assert soul == expected_soul
+
+    def test_user_memory_only_dir_falls_back_to_legacy_agent_soul(self, tmp_path):
+        expected_soul = "Shared research analyst soul."
+        _write_agent(tmp_path, "research-analyst", {"name": "research-analyst"}, soul=expected_soul)
+        user_agent_dir = tmp_path / "users" / "mmkb-workspace-user" / "agents" / "research-analyst"
+        user_agent_dir.mkdir(parents=True)
+        (user_agent_dir / "memory.json").write_text("{}", encoding="utf-8")
+
+        with patch("deerflow.config.agents_config.get_paths", return_value=_make_paths(tmp_path)):
+            from deerflow.config.agents_config import load_agent_soul
+
+            soul = load_agent_soul("research-analyst", user_id="mmkb-workspace-user")
 
         assert soul == expected_soul
 

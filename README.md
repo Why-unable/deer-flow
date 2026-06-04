@@ -254,6 +254,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed Docker development guide.
 If you prefer running services locally:
 
 Prerequisite: complete the "Configuration" steps above first (`make setup`). `make dev` requires a valid `config.yaml` in the project root. Set `DEER_FLOW_PROJECT_ROOT` to define that root explicitly, or `DEER_FLOW_CONFIG_PATH` to point at a specific config file. Runtime state defaults to `.deer-flow` under the project root and can be moved with `DEER_FLOW_HOME`; skills default to `skills/` under the project root and can be moved with `DEER_FLOW_SKILLS_PATH`. Run `make doctor` to verify your setup before starting.
+
+For local MMKB integration, MMKB can call the LangGraph-compatible thread run stream endpoint after authenticating its own user. It forwards its opaque `Bearer workspace_id:secret` token as `config.configurable.mmkb_bearer_token` and sends `context.public_base_url`; DeerFlow passes these values through to the custom RAG tools so they can call MMKB APIs and absolutize returned asset URLs.
 On Windows, run the local development flow from Git Bash. Native `cmd.exe` and PowerShell shells are not supported for the bash-based service scripts, and WSL is not guaranteed because some scripts rely on Git for Windows utilities such as `cygpath`.
 
 1. **Check prerequisites**:

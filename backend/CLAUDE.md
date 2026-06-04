@@ -260,6 +260,8 @@ FastAPI application on port 8001 with health check at `GET /health`. Set `GATEWA
 
 CORS is same-origin by default when requests enter through nginx on port 2026. Split-origin or port-forwarded browser clients must opt in with `GATEWAY_CORS_ORIGINS` (comma-separated exact origins); Gateway `CORSMiddleware` and `CSRFMiddleware` both read that variable so browser CORS and auth-origin checks stay aligned.
 
+**MMKB proxy integration**: MMKB's OpenAI-compatible `model=agent` proxy calls `POST /api/threads/{thread_id}/runs/stream` after authenticating its own client. The proxy forwards the original opaque `Bearer workspace_id:secret` token as `config.configurable.mmkb_bearer_token`; `require_permission("runs", "create")` allows only those run-create requests to pass without DeerFlow UI auth so the custom RAG tools can replay the token against MMKB's workspace-scoped APIs. MMKB also sends top-level `context.public_base_url`; `merge_run_context_overrides()` copies that value into both `configurable` and LangGraph `context` so returned markdown/image URLs can be absolutized.
+
 **Routers**:
 
 | Router | Endpoints |

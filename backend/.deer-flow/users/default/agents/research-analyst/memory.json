@@ -1,0 +1,426 @@
+{
+  "version": "1.0",
+  "lastUpdated": "2026-06-02T12:11:40.186956Z",
+  "user": {
+    "workContext": {
+      "summary": "The user is conducting academic research at the intersection of LLMs and AIOps, specifically targeting anomaly detection, failure triage, and root cause localization (excluding mitigation) in distributed and microservice systems. Their work is grounded in Transformer fundamentals (self-attention, positional encoding, encoder-decoder architecture per Vaswani et al. 2017) and agent memory systems (StateBackend/StoreBackend/FilesystemBackend tiers), with explicit emphasis on temporal log sequence modeling via attention and multimodal observability data integration (metrics/logs/traces). They are actively evaluating novel frameworks like TrioXpert (arXiv:2506.10043v1) and benchmarking tools like OpsEval (arXiv:2310.07637) to inform principled, memory-aware agent design for dynamic incident triage.",
+      "updatedAt": "2026-05-03T06:33:33.291332Z"
+    },
+    "personalContext": {
+      "summary": "The user operates bilingually (English and Chinese), as confirmed by continued use of terms like '精要交付' and '工作记忆', and maintains a rigorously metacognitive, principle-first approach to technical learning and system analysis. Their core interests span foundational AI architectures (Transformers), modern agent frameworks (LangGraph), memory-system design, and applied LLM domains—particularly AIOps, where interpretability, multi-task reasoning, and temporal-multimodal grounding are central concerns.",
+      "updatedAt": "2026-05-03T06:33:33.291332Z"
+    },
+    "topOfMind": {
+      "summary": "The user is concurrently engaged in four tightly coupled focus areas: (1) **Transformer-based temporal modeling for AIOps**, analyzing how self-attention (Eq. 1 [citation:Vaswani et al. (2017)](https://arxiv.org/abs/1706.03762)) and positional encoding enable log-sequence anomaly detection while confronting softmax ambiguity and context window truncation; (2) **Multimodal LLM frameworks for incident diagnosis**, with active evaluation of TrioXpert (arXiv:2506.10043v1)—its modality-specific preprocessing pipeline (Metrics/Logs/Traces), multi-dimensional status representation (numerical statistics + textual semantics + service topology), and MoE collaboration architecture (Fig. 1)—as a benchmark for joint anomaly detection, triage, and root cause localization; (3) **Agentic RAG for dynamic incident response**, distinguishing static vector DB ingestion from on-the-fly document ingestion and retrieval, and mapping constraints (e.g., StoreBackend’s deterministic key-path lookup vs. semantic search limitations) to real-time triage workflows; and (4) **Memory-tier alignment across layers**, explicitly tracing how deepagents-backend’s StateBackend (thread-local temporal working memory), StoreBackend (SOP/topology/causal graph retrieval), and FilesystemBackend (persistent logs, reports, trace artifacts) resolve architectural gaps exposed by Transformer limitations in operational settings. All analysis adheres strictly to the three-point research-analyst methodology: clarification-before-action, evidence-anchored decomposition (e.g., 'Eq. 1', 'Fig. 1', `/mnt/user-data/outputs/deepagents-backend/src/backends/store.py`), and 精要交付—layered, principle-grounded, cognitively efficient delivery with actionable consequences.",
+      "updatedAt": "2026-05-03T12:05:19.674139Z"
+    }
+  },
+  "history": {
+    "recentMonths": {
+      "summary": "Over the past month, the user has expanded their foundational Transformer inquiry into domain-specific application, initiating a rigorous academic investigation of LLM-based AIOps—centered on anomaly detection, failure triage, and root cause localization (not mitigation) in distributed systems. This includes deep engagement with temporal log modeling via self-attention mechanics, multimodal observability integration (metrics/logs/traces), and agentic RAG for dynamic incident triage. They have identified and begun analyzing TrioXpert (arXiv:2506.10043v1) as a novel end-to-end multimodal LLM framework leveraging modality-specific preprocessing (Section III.A), multi-dimensional system status representation (Section III.B), and Mixture-of-Experts (MoE) collaboration (Section III.C, Fig. 1), and are cross-referencing it with OpsEval (arXiv:2310.07637) for prompt-sensitivity and FAE-Score benchmarking. Concurrently, they continue to treat deepagents-backend as a live design artifact, mapping its three-tiered memory architecture (StateBackend, StoreBackend, FilesystemBackend) to operational AIOps constraints—e.g., thread-local temporal state for log windows, deterministic key-path retrieval of topology/SOPs, and persistent filesystem I/O for trace archives—while maintaining strict adherence to evidence-anchored, citation-disciplined, and `present_files`-ready output conventions. The user has now completed the cross-mapping of TrioXpert’s modules to deepagents-backend memory tiers and validated FilesystemBackend’s replay capability (`/mnt/user-data/outputs/ops_eval/replay_20260503/`) as the operational foundation for FAE-Score Evidence dimension compliance. Critically, they have operationally grounded FAE-Score Evidence validation in immutable replay artifacts—requiring every claim in a TrioXpert output to be reconstructible from stored raw traces, preprocessed tensors, and intermediate MoE logits—and confirmed TrioXpert’s MoE architecture comprises Numerical Expert ($\\mathcal{F}_{num}$), Textual Expert ($\\mathcal{F}_{txt}$), and Incident Expert (aggregating to $\\mathcal{R}_{final}$), each mapped precisely to deepagents-backend memory tiers. Additionally, the user has confirmed FAE-Score's human expert correlation coefficient of 0.9175, its superiority over BLEU (0.6705) and ROUGE (−0.3957), and its public dataset release under CC-BY-NC-4.0 (20% of 9,070 questions).",
+      "updatedAt": "2026-05-03T12:05:19.674139Z"
+    },
+    "earlierContext": {
+      "summary": "In the preceding weeks, the user established a methodological foundation for technical analysis, deliberately articulating and internalizing a three-point research-analyst framework: (1) problem-driven clarification before action, (2) structured decomposition anchored to verifiable primary-source artifacts (e.g., equations, figures, code paths), and (3) 精要交付—concise, layered, principle-grounded delivery with full traceability (explicit arXiv citations, deterministic file paths like `/mnt/user-data/outputs`, and `present_files` readiness). This framework emerged not as abstract theory but as an operational constraint, validated through iterative requests for methodology articulation, structural confirmation, and enforcement in outputs.",
+      "updatedAt": "2026-05-03T06:33:33.291332Z"
+    },
+    "longTermBackground": {
+      "summary": "The user possesses deep foundational expertise in Transformer architecture and modern agent systems, consistently prioritizing first-principles understanding over tooling or implementation. Their working style is characterized by strong metacognitive awareness, bilingual technical fluency (English/Chinese), and a commitment to epistemic rigor—treating research methodology itself as a live, enforceable interface standard. This underpins all explorations, from Vaswani et al. (2017) to LangGraph backends to AIOps frameworks.",
+      "updatedAt": "2026-05-03T06:33:33.291332Z"
+    }
+  },
+  "facts": [
+    {
+      "id": "fact_e7f246f7",
+      "content": "User is studying 'Attention Is All You Need' (arXiv:1706.03762, published June 2017) to understand the Transformer architecture's theoretical foundations and design rationale.",
+      "category": "goal",
+      "confidence": 0.95,
+      "createdAt": "2026-04-28T13:27:45.482325Z",
+      "source": "9daa31e8-eb89-4ee2-9335-b304ef644cab"
+    },
+    {
+      "id": "fact_15c7c76c",
+      "content": "User is focused on core Transformer components: self-attention (QKV formulation), multi-head attention, encoder-decoder stack (6 layers each), position encoding, and the deliberate exclusion of RNNs and CNNs.",
+      "category": "knowledge",
+      "confidence": 0.9,
+      "createdAt": "2026-04-28T13:27:45.482325Z",
+      "source": "9daa31e8-eb89-4ee2-9335-b304ef644cab"
+    },
+    {
+      "id": "fact_2e5baf0b",
+      "content": "User prioritizes conceptual, first-principles understanding of attention mechanisms—including parallelization benefits, long-range dependency modeling, and gradient flow implications—over implementation or tooling.",
+      "category": "preference",
+      "confidence": 0.85,
+      "createdAt": "2026-04-28T13:27:45.482325Z",
+      "source": "9daa31e8-eb89-4ee2-9335-b304ef644cab"
+    },
+    {
+      "id": "fact_14c14844",
+      "content": "User values research-analyst methodology that is problem-driven (prioritizing precise clarification before action), structurally decomposed (into verifiable sub-questions anchored to primary sources like equations or figures), and output-oriented with full traceability (structured formats, explicit citations, source lists).",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-01T15:07:15.881073Z",
+      "source": "external-test-3bc73b0d8cc9"
+    },
+    {
+      "id": "fact_3e535624",
+      "content": "User engages metacognitively with technical learning—actively reflecting on *how* analysis should be conducted, not only *what* is being analyzed.",
+      "category": "behavior",
+      "confidence": 0.9,
+      "createdAt": "2026-05-01T15:07:15.881073Z",
+      "source": "external-test-3bc73b0d8cc9"
+    },
+    {
+      "id": "fact_1a2a3c18",
+      "content": "User explicitly endorses and operationalizes the three-point research-analyst methodology: (1) problem-driven clarification before action, (2) structured decomposition anchored to verifiable evidence (e.g., equations, figures, primary sources), and (3)精要 delivery—concise, layered, principle-grounded output prioritizing cognitive efficiency and traceability.",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-01T15:07:59.611868Z",
+      "source": "external-test-a2e7774f00c4"
+    },
+    {
+      "id": "fact_52af3954",
+      "content": "User treats research methodology as a live, actionable framework—not abstract theory—by requesting its explicit articulation and affirming its three-part structure as a working standard for technical analysis.",
+      "category": "behavior",
+      "confidence": 0.95,
+      "createdAt": "2026-05-01T15:07:59.611868Z",
+      "source": "external-test-a2e7774f00c4"
+    },
+    {
+      "id": "fact_9afb431a",
+      "content": "User requires all research-analyst outputs to include explicit, machine-readable arXiv citations in the format `[citation:Vaswani et al. (2017)](https://arxiv.org/abs/1706.03762)` and to reference primary-source artifacts (e.g., 'Eq. 1', 'Fig. 1') when decomposing technical claims.",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-01T16:17:08.198812Z",
+      "source": "external-test-db0cfdbae2fc"
+    },
+    {
+      "id": "fact_f574dc13",
+      "content": "User mandates output delivery via deterministic file-system path (`/mnt/user-data/outputs`) and visualization readiness through `present_files`, treating these as non-negotiable interface requirements for traceability and reproducibility.",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-01T16:17:08.198812Z",
+      "source": "external-test-db0cfdbae2fc"
+    },
+    {
+      "id": "fact_a4b9dbc7",
+      "content": "User operationalizes the three-point research-analyst methodology as a live constraint: (1) clarification must precede action, (2) every analytical claim must be anchored to a verifiable primary-source artifact (equation, figure, or quoted design decision from Vaswani et al. 2017), and (3) delivery must be layered, principle-grounded, and cognitively efficient—never exhaustive.",
+      "category": "behavior",
+      "confidence": 0.95,
+      "createdAt": "2026-05-01T16:17:08.198812Z",
+      "source": "external-test-db0cfdbae2fc"
+    },
+    {
+      "id": "fact_2b36b3ad",
+      "content": "User is analyzing deepagents-backend—a LangGraph Agent backend system—with explicit focus on its three-tiered memory architecture: StateBackend (thread-scoped working memory), StoreBackend (app-scoped structured long-term memory, e.g., InMemoryStore or PostgresStore), and FilesystemBackend (persistent disk I/O for reports, logs, and large datasets).",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-02T14:20:33.815363Z",
+      "source": "external-test-989028ae3afc"
+    },
+    {
+      "id": "fact_971e8b6d",
+      "content": "User distinguishes between traditional RAG (static knowledge via preprocessed vector DBs) and agentic RAG (dynamic, on-the-fly ingestion and querying of user-provided documents), and recognizes deepagents-backend's design supports both paradigms.",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-02T14:20:33.815363Z",
+      "source": "external-test-989028ae3afc"
+    },
+    {
+      "id": "fact_993ba749",
+      "content": "User understands StoreBackend is optimized for precise key-path or key-value retrieval (e.g., user profiles, SOPs, structured metadata) but not fuzzy semantic search—which requires dedicated vector databases like Milvus or Chroma.",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-02T14:20:33.815363Z",
+      "source": "external-test-989028ae3afc"
+    },
+    {
+      "id": "fact_cd7af63a",
+      "content": "User treats LangGraph and deepagents-backend as live technical artifacts under active conceptual analysis—not as tools for immediate implementation—but as exemplars of memory-system design principles applicable across agent frameworks.",
+      "category": "preference",
+      "confidence": 0.9,
+      "createdAt": "2026-05-02T14:20:33.815363Z",
+      "source": "external-test-989028ae3afc"
+    },
+    {
+      "id": "fact_d38eb4a0",
+      "content": "User requires the research-analyst role to enforce *clarification-before-action* as a non-negotiable first step: no analysis proceeds without explicit confirmation of scope, boundary, and intent (e.g., disambiguating 'deepagents-backend' into specific backend modules or integration points).",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-02T15:56:30.299570Z",
+      "source": "external-test-2f4a5019bcec"
+    },
+    {
+      "id": "fact_f601f23b",
+      "content": "User mandates that every analytical claim in research-analyst outputs must be anchored to a verifiable primary-source artifact—specifically naming equations (e.g., 'Eq. 1'), figures (e.g., 'Fig. 1'), code paths (e.g., `/mnt/user-data/outputs/deepagents-backend/src/backends/store.py`), or direct quotations from design documentation—with zero tolerance for secondary interpretation or generic statements.",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-02T15:56:30.299570Z",
+      "source": "external-test-2f4a5019bcec"
+    },
+    {
+      "id": "fact_6e87de5f",
+      "content": "User defines '精要交付' (concise, principle-grounded delivery) as a strict output standard: conclusions must be layered (core → evidence → implication), compressed into minimal cognitively efficient units (e.g., 'three sentences'), and always include actionable technical consequences (e.g., 'thread-local scope implies LangGraph checkpointer must avoid cross-thread state leakage').",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-02T15:56:30.299570Z",
+      "source": "external-test-2f4a5019bcec"
+    },
+    {
+      "id": "fact_77a1af6f",
+      "content": "User's academic research focuses on LLM applications in AIOps—specifically anomaly detection, failure triage, and root cause localization (excluding mitigation) in distributed/microservice systems—grounded in Transformer fundamentals and agent memory systems.",
+      "category": "goal",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T06:33:33.291332Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_9bdabf31",
+      "content": "User emphasizes temporal log sequence modeling via attention and multimodal observability data integration (metrics/logs/traces) as core technical requirements for AIOps LLM systems.",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T06:33:33.291332Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_94c2bcdc",
+      "content": "User is actively evaluating TrioXpert (arXiv:2506.10043v1), a novel end-to-end multimodal LLM framework using modality-specific preprocessing + Mixture-of-Experts (MoE) collaboration for joint anomaly detection, failure triage, and root cause localization.",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T06:33:33.291332Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_020d5cdd",
+      "content": "User cross-references TrioXpert with OpsEval (arXiv:2310.07637), specifically its FAE-Score metric and prompt-sensitivity analysis, to benchmark interpretability and robustness in AIOps LLM evaluation.",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T06:33:33.291332Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_5386490e",
+      "content": "User requires research-analyst outputs to map technical claims to specific primary-source artifacts from TrioXpert (e.g., 'Fig. 1') and OpsEval (e.g., 'FAE-Score') using machine-readable arXiv citations in the format `[citation:TrioXpert (2025)](https://arxiv.org/abs/2506.10043)` and `[citation:OpsEval (2025)](https://arxiv.org/abs/2310.07637)`.",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T06:33:33.291332Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_0451435c",
+      "content": "User treats Transformer limitations—including softmax attention ambiguity and context window truncation—as direct drivers for deepagents-backend’s tiered memory design, requiring explicit traceability from Eq. 1/Vaswani et al. to StateBackend scope and StoreBackend key-path semantics.",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T06:33:33.291332Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_7dc23040",
+      "content": "User requires research-analyst outputs to be delivered in Chinese when explicitly instructed (e.g., '用中文回答'), while preserving all technical precision, primary-source anchoring (e.g., 'Fig. 1', 'Eq. 1'), machine-readable arXiv citations, and deterministic file-path references.",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T08:26:54.442991Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_7121a554",
+      "content": "User requires TrioXpert analysis to be explicitly anchored to its arXiv v1 paper structure: Section III.A (Modality-Specific Preprocessing), Section III.B (Multi-Dimensional System Status Representation), and Section III.C / Fig. 1 (MoE Collaborative Inference Architecture).",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T08:56:11.093961Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_741807eb",
+      "content": "User identifies TrioXpert's Log Summarizer as using RGCIE prompting to avoid softmax ambiguity—a direct architectural response to Eq. 1 limitations in Vaswani et al. (2017).",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T08:56:11.093961Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_92bd428c",
+      "content": "User distinguishes TrioXpert's three preprocessing pipelines: Metrics (time-series statistical summarization), Logs (keyword-based incident-symptom alignment + RGCIE prompting), and Traces (dependency-graph–aware tokenization and causal path extraction).",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T08:56:11.093961Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_f8709557",
+      "content": "User treats TrioXpert's 'multi-dimensional system status representation' as fusing (a) numerical statistics (e.g., time-series anomalies), (b) textual semantics (e.g., log trace narratives), and (c) service call topology (e.g., dependency graphs), per Section III.B.",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T08:56:11.093961Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_da27f8e9",
+      "content": "User requires FAE-Score analysis to be decomposed along its three orthogonal, human-validated dimensions—Fluency (linguistic coherence + QA compliance), Accuracy (factual precision + ground-truth coverage), and Evidence (traceability of claims to input modalities and reasoning steps)—with explicit anchoring to OpsEval v5 (arXiv:2310.07637v5) Section IV.B and Table 3.",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T09:05:35.507263Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_89c67e65",
+      "content": "User mandates cross-mapping of TrioXpert's three modules (III.A preprocessing, III.B status representation, III.C MoE inference) to deepagents-backend's three memory tiers: Metrics/Logs/Traces preprocessing → StateBackend (temporal window buffering); Multi-dimensional status embedding → StoreBackend (structured retrieval of topology/SOPs/causal graphs); MoE-generated reasoning chains → FilesystemBackend (persistent traceable artifacts for audit/replay).",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T09:05:35.507263Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_aacbd7de",
+      "content": "User treats FilesystemBackend's replay capability (e.g., `/mnt/user-data/outputs/ops_eval/replay_20260503/`) as the operational validation layer for FAE-Score Evidence dimension — requiring every claim in a TrioXpert output to be reconstructible from stored raw traces, preprocessed tensors, and intermediate MoE logits.",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T09:05:35.507263Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_f67e4e82",
+      "content": "User identifies RGCIE prompting (used in TrioXpert Log Summarizer) as a direct architectural mitigation of softmax ambiguity in Eq. 1 of Vaswani et al. (2017), enforcing constrained token generation via role-guided chain-of-thought scaffolding instead of free-form attention-weighted sampling.",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T09:05:35.507263Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_6916c9f2",
+      "content": "User has completed the cross-mapping of TrioXpert's modules (III.A preprocessing, III.B status representation, III.C MoE inference) to deepagents-backend's three memory tiers and validated FilesystemBackend's replay capability (`/mnt/user-data/outputs/ops_eval/replay_20260503/`) as the operational foundation for FAE-Score Evidence dimension compliance.",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T09:10:59.769346Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_397d3e7c",
+      "content": "User requires FAE-Score Evidence validation to be operationally grounded in FilesystemBackend's immutable replay artifacts — specifically requiring every claim in a TrioXpert output to be reconstructible from stored raw traces, preprocessed tensors, and intermediate MoE logits, per `/mnt/user-data/outputs/ops_eval/replay_20260503/`.",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T09:10:59.769346Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_8818d275",
+      "content": "User treats OpsEval’s FAE-Score as having three orthogonal, human-validated dimensions: Fluency (Qwen2-72B-Instruct rubric), Accuracy (keyword-F1), and Evidence (source-grounded, replayable artifacts); it achieves 0.9175 correlation with human experts, outperforms BLEU (0.6705) and ROUGE (−0.3957), and was validated on 7,334 MC + 1,736 QA questions across 9 sub-domains, with 20% of dataset publicly released under CC-BY-NC-4.0.",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T09:10:59.769346Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_8d34b523",
+      "content": "User identifies TrioXpert’s MoE architecture as comprising Numerical Expert ($\\mathcal{F}_{num}$), Textual Expert ($\\mathcal{F}_{txt}$), and Incident Expert (aggregates to $\\mathcal{R}_{final}$), and maps these to deepagents-backend’s tiered memory usage: preprocessing → StateBackend buffering, status embedding → StoreBackend retrieval, and MoE reasoning chains → FilesystemBackend persistence.",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T09:10:59.769346Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_634f4203",
+      "content": "User mandates that FAE-Score Evidence analysis must be decomposed along its three orthogonal, human-validated dimensions — Fluency (linguistic coherence + QA compliance), Accuracy (factual precision + ground-truth coverage), and Evidence (traceability of claims to input modalities and reasoning steps) — with explicit anchoring to OpsEval v5 (arXiv:2310.07637v5) Section IV.B and Table 3.",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T09:13:19.762893Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_a92df274",
+      "content": "User confirms FAE-Score achieves 0.9175 correlation with human experts, outperforms BLEU (0.6705) and ROUGE (−0.3957), and is based on a bilingual, multi-task IT Ops benchmark of 9,070 questions, with 20% publicly released under CC-BY-NC-4.0 [citation:OpsEval (2025)](https://arxiv.org/abs/2310.07637).",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T09:24:19.247710Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_1fe19102",
+      "content": "User requires FAE-Score Evidence dimension validation to be operationally grounded in FilesystemBackend's immutable replay artifacts (`/mnt/user-data/outputs/ops_eval/replay_20260503/`)—specifically requiring every claim in a TrioXpert output to be reconstructible from stored raw traces, preprocessed tensors, and intermediate MoE logits.",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T09:24:19.247710Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_5953998d",
+      "content": "User mandates that all FAE-Score analysis must explicitly anchor to OpsEval v5 (arXiv:2310.07637v5) Section IV.B and Table 3, and that Fluency, Accuracy, and Evidence dimensions must be treated as orthogonal, human-validated criteria.",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T09:24:19.247710Z",
+      "source": "3566446e-2578-4bb7-8875-90d58d7bab2c"
+    },
+    {
+      "id": "fact_ddbc6cf3",
+      "content": "User confirms that research-analyst support must begin with explicit task scoping — e.g., 'TrioXpert MoE Fig. 1 module-level decomposition + deepagents-backend memory tier mapping' — and will only proceed after mutual clarification of scope, boundary, and intent.",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T12:03:16.648125Z",
+      "source": "mmkb-agent-422d7e1d1d2e"
+    },
+    {
+      "id": "fact_b9d11555",
+      "content": "User expects research-analyst outputs to invoke local knowledge tools (e.g., `mmkb_search`) when needed to ensure factual grounding and provenance, especially for code paths, configuration files, or internal documentation referenced in `/mnt/user-data/outputs/`.",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T12:03:16.648125Z",
+      "source": "mmkb-agent-422d7e1d1d2e"
+    },
+    {
+      "id": "fact_858b45e1",
+      "content": "User defines AIOps core思想 (core ideas) as three interlocking principles: (1) paradigm shift from passive alert-driven response to active, multimodal, high-fidelity system state perception; (2) decision revolution from experience-driven to evidence-driven, requiring full traceability of claims to input modalities and reasoning steps (e.g., FAE-Score Evidence dimension); and (3) systemic re-engineering of the 'data-knowledge-action' lifecycle via layered memory architecture (StateBackend/StoreBackend/FilesystemBackend).",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T12:05:19.674139Z",
+      "source": "mmkb-agent-11117eac61f1"
+    },
+    {
+      "id": "fact_6cae3460",
+      "content": "User treats 'AIOps' not as a monolithic technology but as a *systems-level discipline* whose validity is operationally defined by three criteria: (a) coverage of anomaly detection, failure triage, and root cause localization (per TrioXpert Section I); (b) resolution of inherent impracticality of manual scale (per OpsEval Section I); and (c) architectural support for evidence-grounded, replayable reasoning (per FilesystemBackend replay path `/mnt/user-data/outputs/ops_eval/replay_20260503/`).",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T12:05:19.674139Z",
+      "source": "mmkb-agent-11117eac61f1"
+    },
+    {
+      "id": "fact_252be4a2",
+      "content": "User has confirmed operational readiness of 'agent mode' as a functional state indicator for interactive, memory-aware research-analyst interaction.",
+      "category": "behavior",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T14:56:08.856114Z",
+      "source": "mmkb-agent-test-002"
+    },
+    {
+      "id": "fact_081ef9cb",
+      "content": "Local MMKB knowledge base contains 11 documents with status `ready`.",
+      "category": "knowledge",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T14:56:50.399693Z",
+      "source": "mmkb-agent-tool-test-001"
+    },
+    {
+      "id": "fact_32f8bfb0",
+      "content": "User confirms 'agent mode' is functionally active and serves as a runtime indicator for interactive, memory-aware research-analyst interaction.",
+      "category": "behavior",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T15:06:44.189262Z",
+      "source": "mmkb-agent-086a03c503dd"
+    },
+    {
+      "id": "fact_872c3560",
+      "content": "User expects research-analyst support to begin with explicit task scoping (e.g., 'TrioXpert MoE Fig. 1 module-level decomposition + deepagents-backend memory tier mapping') and will only proceed after mutual clarification of scope, boundary, and intent.",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T15:06:44.189262Z",
+      "source": "mmkb-agent-086a03c503dd"
+    },
+    {
+      "id": "fact_042b3016",
+      "content": "User requires research-analyst outputs to invoke local knowledge tools (e.g., `mmkb_search`) when needed to ensure factual grounding and provenance, especially for code paths, configuration files, or internal documentation referenced in `/mnt/user-data/outputs/`.",
+      "category": "preference",
+      "confidence": 0.95,
+      "createdAt": "2026-05-03T15:06:44.189262Z",
+      "source": "mmkb-agent-086a03c503dd"
+    }
+  ]
+}

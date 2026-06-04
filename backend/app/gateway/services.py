@@ -12,6 +12,7 @@ import json
 import logging
 import re
 from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -34,6 +35,7 @@ from deerflow.runtime import (
     run_agent,
 )
 from deerflow.runtime.runs.naming import resolve_root_run_name
+from deerflow.runtime.user_context import reset_current_user, set_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +134,10 @@ _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
         "max_concurrent_subagents",
         "agent_name",
         "is_bootstrap",
+        "public_base_url",
+        "mmkb_workspace_id",
+        "mmkb_user_id",
+        "mmkb_tenant_id",
     }
 )
 
@@ -151,6 +157,31 @@ def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, An
                 configurable.setdefault(key, context[key])
             if isinstance(runtime_context, dict):
                 runtime_context.setdefault(key, context[key])
+
+
+_SAFE_USER_ID_RE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def _safe_user_id_part(value: Any) -> str:
+    return _SAFE_USER_ID_RE.sub("-", str(value or "").strip()).strip("-")
+
+
+def resolve_mmkb_proxy_user(request: Request, context: Mapping[str, Any] | None) -> SimpleNamespace | None:
+    """Resolve the MMKB workspace/user pair into a DeerFlow runtime user.
+
+    MMKB identity is trusted only after authz marks the request as an internal
+    MMKB proxy run. The resulting id is path-safe for DeerFlow user buckets.
+    """
+
+    if not getattr(request.state, "mmkb_proxy", False) or not isinstance(context, Mapping):
+        return None
+
+    workspace_id = _safe_user_id_part(context.get("mmkb_workspace_id"))
+    user_id = _safe_user_id_part(context.get("mmkb_user_id"))
+    if not workspace_id or not user_id:
+        return None
+
+    return SimpleNamespace(id=f"mmkb-{workspace_id}-{user_id}", system_role="mmkb_proxy")
 
 
 def inject_authenticated_user_context(config: dict[str, Any], request: Request) -> None:
@@ -302,72 +333,82 @@ async def start_run(
                 detail=f"Model {model_name!r} is not in the configured model allowlist",
             )
 
-    try:
-        record = await run_mgr.create_or_reject(
-            thread_id,
-            body.assistant_id,
-            on_disconnect=disconnect,
-            metadata=body.metadata or {},
-            kwargs={"input": body.input, "config": body.config},
-            multitask_strategy=body.multitask_strategy,
-            model_name=model_name,
-        )
-    except ConflictError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except UnsupportedStrategyError as exc:
-        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    mmkb_user = resolve_mmkb_proxy_user(request, body_context)
+    mmkb_user_token = None
+    if mmkb_user is not None:
+        request.state.user = mmkb_user
+        mmkb_user_token = set_current_user(mmkb_user)
 
-    # Upsert thread metadata so the thread appears in /threads/search,
-    # even for threads that were never explicitly created via POST /threads
-    # (e.g. stateless runs).
     try:
-        existing = await run_ctx.thread_store.get(thread_id)
-        if existing is None:
-            await run_ctx.thread_store.create(
+        try:
+            record = await run_mgr.create_or_reject(
                 thread_id,
-                assistant_id=body.assistant_id,
-                metadata=body.metadata,
+                body.assistant_id,
+                on_disconnect=disconnect,
+                metadata=body.metadata or {},
+                kwargs={"input": body.input, "config": body.config},
+                multitask_strategy=body.multitask_strategy,
+                model_name=model_name,
             )
-        else:
-            await run_ctx.thread_store.update_status(thread_id, "running")
-    except Exception:
-        logger.warning("Failed to upsert thread_meta for %s (non-fatal)", sanitize_log_param(thread_id))
+        except ConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except UnsupportedStrategyError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
 
-    agent_factory = resolve_agent_factory(body.assistant_id)
-    graph_input = normalize_input(body.input)
-    config = build_run_config(thread_id, body.config, body.metadata, assistant_id=body.assistant_id)
+        # Upsert thread metadata so the thread appears in /threads/search,
+        # even for threads that were never explicitly created via POST /threads
+        # (e.g. stateless runs).
+        try:
+            existing = await run_ctx.thread_store.get(thread_id)
+            if existing is None:
+                await run_ctx.thread_store.create(
+                    thread_id,
+                    assistant_id=body.assistant_id,
+                    metadata=body.metadata,
+                )
+            else:
+                await run_ctx.thread_store.update_status(thread_id, "running")
+        except Exception:
+            logger.warning("Failed to upsert thread_meta for %s (non-fatal)", sanitize_log_param(thread_id))
 
-    # Merge DeerFlow-specific context overrides into both ``configurable`` and ``context``.
-    # The ``context`` field is a custom extension for the langgraph-compat layer
-    # that carries agent configuration (model_name, thinking_enabled, etc.).
-    # Only agent-relevant keys are forwarded; unknown keys (e.g. thread_id) are ignored.
-    merge_run_context_overrides(config, getattr(body, "context", None))
-    inject_authenticated_user_context(config, request)
+        agent_factory = resolve_agent_factory(body.assistant_id)
+        graph_input = normalize_input(body.input)
+        config = build_run_config(thread_id, body.config, body.metadata, assistant_id=body.assistant_id)
 
-    stream_modes = normalize_stream_modes(body.stream_mode)
+        # Merge DeerFlow-specific context overrides into both ``configurable`` and ``context``.
+        # The ``context`` field is a custom extension for the langgraph-compat layer
+        # that carries agent configuration (model_name, thinking_enabled, etc.).
+        # Only agent-relevant keys are forwarded; unknown keys (e.g. thread_id) are ignored.
+        merge_run_context_overrides(config, getattr(body, "context", None))
+        inject_authenticated_user_context(config, request)
 
-    task = asyncio.create_task(
-        run_agent(
-            bridge,
-            run_mgr,
-            record,
-            ctx=run_ctx,
-            agent_factory=agent_factory,
-            graph_input=graph_input,
-            config=config,
-            stream_modes=stream_modes,
-            stream_subgraphs=body.stream_subgraphs,
-            interrupt_before=body.interrupt_before,
-            interrupt_after=body.interrupt_after,
+        stream_modes = normalize_stream_modes(body.stream_mode)
+
+        task = asyncio.create_task(
+            run_agent(
+                bridge,
+                run_mgr,
+                record,
+                ctx=run_ctx,
+                agent_factory=agent_factory,
+                graph_input=graph_input,
+                config=config,
+                stream_modes=stream_modes,
+                stream_subgraphs=body.stream_subgraphs,
+                interrupt_before=body.interrupt_before,
+                interrupt_after=body.interrupt_after,
+            )
         )
-    )
-    record.task = task
+        record.task = task
 
-    # Title sync is handled by worker.py's finally block which reads the
-    # title from the checkpoint and calls thread_store.update_display_name
-    # after the run completes.
+        # Title sync is handled by worker.py's finally block which reads the
+        # title from the checkpoint and calls thread_store.update_display_name
+        # after the run completes.
 
-    return record
+        return record
+    finally:
+        if mmkb_user_token is not None:
+            reset_current_user(mmkb_user_token)
 
 
 async def sse_consumer(

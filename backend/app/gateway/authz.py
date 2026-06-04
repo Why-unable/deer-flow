@@ -128,6 +128,41 @@ def _make_test_request_stub() -> Any:
     return SimpleNamespace(state=SimpleNamespace(), cookies={}, _deerflow_test_bypass_auth=True)
 
 
+def _body_mapping_value(body: Any, key: str) -> Any:
+    """Read a top-level value from a dict-like or Pydantic request body."""
+    if body is None:
+        return None
+    if isinstance(body, dict):
+        return body.get(key)
+    return getattr(body, key, None)
+
+
+def _is_mmkb_proxy_run_create(resource: str, action: str, kwargs: dict[str, Any]) -> bool:
+    """Allow MMKB's OpenAI-compatible proxy to create DeerFlow runs without DeerFlow UI auth.
+
+    MMKB authenticates its own client first, then forwards the original
+    ``Bearer workspace_id:secret`` token inside ``config.configurable`` so RAG
+    tools can replay that token against MMKB's workspace-scoped API. DeerFlow
+    treats this token as opaque and does not parse it; this bypass only lets
+    the run reach the agent. The tools still fail with MMKB 401/403 if the
+    token is invalid or rotated.
+    """
+    if resource != "runs" or action != "create":
+        return False
+
+    body = kwargs.get("body")
+    config = _body_mapping_value(body, "config")
+    if not isinstance(config, dict):
+        return False
+
+    configurable = config.get("configurable") or {}
+    if not isinstance(configurable, dict):
+        return False
+
+    token = str(configurable.get("mmkb_bearer_token") or "").strip()
+    return token.lower().startswith("bearer ") and ":" in token
+
+
 async def _authenticate(request: Request) -> AuthContext:
     """Authenticate request and return AuthContext.
 
@@ -249,6 +284,11 @@ def require_permission(
                 request = kwargs["request"]
 
             if getattr(request, "_deerflow_test_bypass_auth", False):
+                return await func(*args, **kwargs)
+
+            if _is_mmkb_proxy_run_create(resource, action, kwargs):
+                request.state.auth = AuthContext(user=None, permissions=[])
+                request.state.mmkb_proxy = True
                 return await func(*args, **kwargs)
 
             auth: AuthContext = getattr(request.state, "auth", None)

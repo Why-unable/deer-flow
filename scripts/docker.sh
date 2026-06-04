@@ -15,6 +15,22 @@ DOCKER_DIR="$PROJECT_ROOT/docker"
 # Docker Compose command with project name
 COMPOSE_CMD="docker compose -p deer-flow-dev -f docker-compose-dev.yaml"
 
+# Load project-root .env before docker compose so ${VAR} substitutions in
+# docker-compose*.yaml see the same values that env_file later passes into
+# containers.
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
+
+# Sensible defaults for China/local restricted networks. Users can still
+# override any of these before running make, e.g. APT_MIRROR=...
+export APT_MIRROR="${APT_MIRROR:-mirrors.ustc.edu.cn}"
+export UV_INDEX_URL="${UV_INDEX_URL:-https://mirrors.ustc.edu.cn/pypi/web/simple}"
+export NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
+export UV_IMAGE="${UV_IMAGE:-ghcr.io/astral-sh/uv:0.7.20}"
+
 detect_sandbox_mode() {
     local config_file="$PROJECT_ROOT/config.yaml"
     local sandbox_use=""
@@ -301,6 +317,28 @@ restart() {
     echo ""
 }
 
+restart_gateway() {
+    echo "========================================"
+    echo "  Restarting DeerFlow Gateway + Nginx"
+    echo "========================================"
+    echo ""
+
+    if [ -z "$DEER_FLOW_ROOT" ]; then
+        export DEER_FLOW_ROOT="$PROJECT_ROOT"
+        echo -e "${BLUE}Setting DEER_FLOW_ROOT=$DEER_FLOW_ROOT${NC}"
+        echo ""
+    fi
+
+    echo -e "${BLUE}Recreating gateway and nginx with project .env...${NC}"
+    cd "$DOCKER_DIR" && $COMPOSE_CMD up -d --force-recreate gateway nginx
+    echo ""
+    echo -e "${GREEN}✓ Gateway and nginx restarted${NC}"
+    echo ""
+    echo "  🌐 Application: http://localhost:2026"
+    echo "  📋 View logs: make docker-logs-gateway"
+    echo ""
+}
+
 # Show help
 help() {
     echo "DeerFlow Docker Management Script"
@@ -311,6 +349,7 @@ help() {
     echo "  init              - Pull the sandbox image (speeds up first Pod startup)"
     echo "  start             - Start Docker services (auto-detects sandbox mode from config.yaml)"
     echo "  restart           - Restart all running Docker services"
+    echo "  restart-gateway   - Recreate gateway + nginx after backend/config/tool changes"
     echo "  logs [option] - View Docker development logs"
     echo "                  --frontend   View frontend logs only"
     echo "                  --gateway    View gateway logs only"
@@ -333,6 +372,9 @@ main() {
             ;;
         restart)
             restart
+            ;;
+        restart-gateway)
+            restart_gateway
             ;;
         logs)
             logs "$2"
