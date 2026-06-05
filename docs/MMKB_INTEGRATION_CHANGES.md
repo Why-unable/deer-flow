@@ -421,6 +421,35 @@ DEER_FLOW_INTERNAL_AUTH_TOKEN
 - 推荐提交只包含变量名的 `.env.example`，并在每台目标机器上创建真实 `.env`。
 - `DEER_FLOW_INTERNAL_AUTH_TOKEN` 必须与 MMKB 中配置的值一致。
 
+部署前可从 DeerFlow 根目录运行：
+
+```bash
+./scripts/check_deerflow_internal_auth.sh
+```
+
+该脚本默认检查当前 DeerFlow 的 `.env` 与同级 `../mmkb/.env`，并验证：
+
+- 两侧均存在 `DEER_FLOW_INTERNAL_AUTH_TOKEN`，且指纹一致；
+- MMKB `.env` 能被正常 source；
+- 若本机存在运行中的 MMKB 进程，其实际环境已加载该 token；
+- DeerFlow 的公开 `/health` 可访问时，受保护的 `/api/models` 也接受该 token。
+
+检查通过后的结尾提示会根据 MMKB 实际运行状态变化：
+
+- MMKB 已运行且进程已加载预期 token：明确提示无需重启；
+- 未检测到 MMKB 进程：提示启动 MMKB；
+- 检测到 MMKB 进程但无法确认其环境：提示重启以确保加载预期 token。
+
+缺失 token 时可运行：
+
+```bash
+./scripts/check_deerflow_internal_auth.sh --fix
+```
+
+修复模式会从已有的一侧同步到缺失侧；双方都缺失时生成一个共享 token；
+双方已有但不一致时拒绝自动覆盖。只有 `.env` 或运行进程实际使用的 token
+发生变化时，才需要重启对应服务；已经加载正确 token 的 MMKB 无需重启。
+
 当前仓库提醒：
 
 - `.env` 被 `.gitignore` 忽略。
@@ -482,6 +511,7 @@ git rm --cached .env
 | `backend/tests/test_custom_agent.py` | fallback 测试 | 保护共享 agent/用户级 memory 行为 |
 | `config.yaml` | 本地 runtime 配置 | 注册 MMKB tools 和模型配置 |
 | `docker/docker-compose-dev.yaml` | 移除空 token override | 保留 `.env` 中的内部 auth token |
+| `docs/deploy.md` | MMKB 集成版 DeerFlow 最简部署指南 | 说明 `.env`、内部认证检查和 Docker 启动步骤 |
 | `extensions_config.json` | 禁用状态的 MCP extension skeleton | 本地 extension 配置 |
 | `scripts/docker.sh` | 加载 `.env`、默认镜像源、gateway restart 命令 | 可靠的本地 Docker 工作流 |
 | `skills/custom/local-deep-research/SKILL.md` | 本地研究 workflow skill | 系统化 MMKB 文档研究 |
