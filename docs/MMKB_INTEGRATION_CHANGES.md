@@ -357,8 +357,12 @@ SOUL 行为：
 - 为本地/受限网络开发加入默认镜像源：
   - `APT_MIRROR=mirrors.ustc.edu.cn`
   - `UV_INDEX_URL=https://mirrors.ustc.edu.cn/pypi/web/simple`
+  - `UV_HTTP_TIMEOUT=120`
   - `NPM_REGISTRY=https://registry.npmmirror.com`
   - `UV_IMAGE=ghcr.io/astral-sh/uv:0.7.20`
+- gateway 镜像构建会把 `UV_HTTP_TIMEOUT` 作为 build arg 传给
+  `uv sync`，避免迁移到网络较慢机器后因 uv 默认 30 秒下载超时而构建失败；
+  可在 DeerFlow 根目录 `.env` 或执行命令前覆盖该值。
 - 从 gateway compose environment 中移除了显式的
   `DEER_FLOW_INTERNAL_AUTH_TOKEN=${...:-}`，避免它用空字符串覆盖
   `.env` / `env_file` 里的值。
