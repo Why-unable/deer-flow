@@ -18,7 +18,13 @@ from starlette.types import ASGIApp
 
 from app.gateway.auth.errors import AuthErrorCode, AuthErrorResponse
 from app.gateway.authz import _ALL_PERMISSIONS, AuthContext
-from app.gateway.internal_auth import INTERNAL_AUTH_HEADER_NAME, get_internal_user, is_valid_internal_auth_token
+from app.gateway.internal_auth import (
+    INTERNAL_ARTIFACT_USER_HEADER_NAME,
+    INTERNAL_AUTH_HEADER_NAME,
+    get_internal_user,
+    is_valid_internal_auth_token,
+    is_valid_internal_user_id,
+)
 from deerflow.runtime.user_context import reset_current_user, set_current_user
 
 # Paths that never require authentication.
@@ -47,6 +53,10 @@ def _is_public(path: str) -> bool:
     if stripped in _PUBLIC_EXACT_PATHS:
         return True
     return any(path.startswith(prefix) for prefix in _PUBLIC_PATH_PREFIXES)
+
+
+def _is_artifact_path(path: str) -> bool:
+    return path.startswith("/api/threads/") and "/artifacts/" in path
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -78,7 +88,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         internal_user = None
         if is_valid_internal_auth_token(request.headers.get(INTERNAL_AUTH_HEADER_NAME)):
-            internal_user = get_internal_user()
+            artifact_user_id = None
+            if _is_artifact_path(request.url.path):
+                artifact_user_id = request.headers.get(INTERNAL_ARTIFACT_USER_HEADER_NAME)
+                if artifact_user_id and not is_valid_internal_user_id(artifact_user_id):
+                    return JSONResponse(status_code=400, content={"detail": "Invalid artifact user"})
+            internal_user = get_internal_user(artifact_user_id)
 
         # Non-public path: require session cookie
         if internal_user is None and not request.cookies.get("access_token"):

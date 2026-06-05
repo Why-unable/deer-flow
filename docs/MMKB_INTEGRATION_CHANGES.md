@@ -147,12 +147,18 @@ config 和 SOUL。
   `local-systematic-literature-review` 也显式强化了同一约束：本地知识库
   文档内容只能通过 `rag_*` 工具读取，禁止把 MMKB 返回的服务端路径传给
   `grep`、`read_file`、`bash`、`ls` 等文件/命令工具。
+- MMKB 下载 DeerFlow artifacts 时会在内部请求中同时发送
+  `X-DeerFlow-Internal-Token` 和 `X-DeerFlow-Artifact-User`。后者只在内部
+  token 校验通过且路径是 artifact 路由时生效，用于把下载请求定位到
+  `mmkb-<workspace_id>-<user_id>` 用户桶，而不是默认的 `default` 用户桶。
 
 目的：
 
 - DeerFlow 不需要直接访问数据库或文件系统，也能把 MMKB 作为本地知识源。
 - agent 侧检索沿用同一套 MMKB bearer 鉴权。
 - 可通过公开 `image_url` 使用视觉资产。
+- MMKB/OpenWebUI 可以下载由 workspace+user 隔离 run 生成的
+  `/mnt/user-data/outputs/*` 文件。
 
 `config.yaml` 中的注册示例：
 

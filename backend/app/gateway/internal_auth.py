@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
 from types import SimpleNamespace
 
 from deerflow.runtime.user_context import DEFAULT_USER_ID
 
 INTERNAL_AUTH_HEADER_NAME = "X-DeerFlow-Internal-Token"
+INTERNAL_ARTIFACT_USER_HEADER_NAME = "X-DeerFlow-Artifact-User"
 INTERNAL_AUTH_ENV_VAR = "DEER_FLOW_INTERNAL_AUTH_TOKEN"
+_SAFE_USER_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def _load_internal_auth_token() -> str:
@@ -32,6 +35,12 @@ def is_valid_internal_auth_token(token: str | None) -> bool:
     return bool(token) and secrets.compare_digest(token, _INTERNAL_AUTH_TOKEN)
 
 
-def get_internal_user():
+def is_valid_internal_user_id(user_id: str | None) -> bool:
+    """Return True when an internal-request user bucket id is path safe."""
+    return bool(user_id) and bool(_SAFE_USER_ID_RE.fullmatch(str(user_id)))
+
+
+def get_internal_user(user_id: str | None = None):
     """Return the synthetic user used for trusted internal channel calls."""
-    return SimpleNamespace(id=DEFAULT_USER_ID, system_role="internal")
+    resolved_user_id = str(user_id) if is_valid_internal_user_id(user_id) else DEFAULT_USER_ID
+    return SimpleNamespace(id=resolved_user_id, system_role="internal")

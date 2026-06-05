@@ -31,6 +31,11 @@ same response when the user is still reviewing or refining the plan.
 - Intermediate content that can reasonably fit in the chat response should be
   shown in the response, not only saved to files. The final PPTX itself is the
   exception and should be shared through `present_files`.
+- Do not write Markdown download links that point directly to
+  `/mnt/user-data/workspace/...`, `/mnt/user-data/uploads/...`, or
+  `/mnt/user-data/outputs/...`. These are sandbox-internal paths, not browser
+  URLs. After creating a user-facing file, call `present_files` and let the
+  outer runtime/client expose the downloadable link.
 - Do not rely on plan files created in previous turns. Some external chat
   frontends provide full text history but do not preserve DeerFlow thread IDs, so
   `/mnt/user-data/workspace/` may point to a new thread directory on the next
