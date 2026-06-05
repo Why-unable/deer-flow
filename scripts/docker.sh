@@ -27,7 +27,7 @@ fi
 # Sensible defaults for China/local restricted networks. Users can still
 # override any of these before running make, e.g. APT_MIRROR=...
 export APT_MIRROR="${APT_MIRROR:-mirrors.ustc.edu.cn}"
-export UV_INDEX_URL="${UV_INDEX_URL:-https://mirrors.ustc.edu.cn/pypi/web/simple}"
+export UV_INDEX_URL="${UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
 export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-120}"
 export NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
 export UV_IMAGE="${UV_IMAGE:-ghcr.io/astral-sh/uv:0.7.20}"
