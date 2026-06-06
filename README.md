@@ -255,7 +255,7 @@ If you prefer running services locally:
 
 Prerequisite: complete the "Configuration" steps above first (`make setup`). `make dev` requires a valid `config.yaml` in the project root. Set `DEER_FLOW_PROJECT_ROOT` to define that root explicitly, or `DEER_FLOW_CONFIG_PATH` to point at a specific config file. Runtime state defaults to `.deer-flow` under the project root and can be moved with `DEER_FLOW_HOME`; skills default to `skills/` under the project root and can be moved with `DEER_FLOW_SKILLS_PATH`. Run `make doctor` to verify your setup before starting.
 
-For local MMKB integration, MMKB can call the LangGraph-compatible thread run stream endpoint after authenticating its own user. It forwards its opaque `Bearer workspace_id:secret` token as `config.configurable.mmkb_bearer_token` and sends `context.public_base_url`; DeerFlow passes these values through to the custom RAG tools so they can call MMKB APIs and absolutize returned asset URLs.
+For local MMKB integration, MMKB can call the LangGraph-compatible thread run stream endpoint after authenticating its own user. It forwards its opaque `Bearer workspace_id:secret` token as `config.configurable.mmkb_bearer_token` and sends `context.public_base_url`; DeerFlow passes these values through to the custom RAG tools so they can call MMKB APIs and absolutize returned asset URLs. When the lead agent delegates research to a subagent, DeerFlow also carries this narrow MMKB authentication and identity context into the delegated run so its RAG tools remain workspace-scoped.
 On Windows, run the local development flow from Git Bash. Native `cmd.exe` and PowerShell shells are not supported for the bash-based service scripts, and WSL is not guaranteed because some scripts rely on Git for Windows utilities such as `cygpath`.
 
 1. **Check prerequisites**:
@@ -675,7 +675,7 @@ Most agents forget everything the moment a conversation ends. DeerFlow remembers
 
 Across sessions, DeerFlow builds a persistent memory of your profile, preferences, and accumulated knowledge. The more you use it, the better it knows you — your writing style, your technical stack, your recurring workflows. Memory is stored locally and stays under your control.
 
-Memory updates now skip duplicate fact entries at apply time, so repeated preferences and context do not accumulate endlessly across sessions.
+Memory updates now skip duplicate fact entries at apply time, so repeated preferences and context do not accumulate endlessly across sessions. Existing memory files with missing required fields, including files containing only `{}`, are normalized when loaded so future updates can proceed.
 
 ## Recommended Models
 

@@ -206,7 +206,7 @@ Lead-agent middlewares are assembled in strict append order across `packages/har
 10. **TodoListMiddleware** - Task tracking with `write_todos` tool (optional, if plan_mode)
 11. **TokenUsageMiddleware** - Records token usage metrics when token tracking is enabled (optional); subagent usage is cached by `tool_call_id` only while token usage is enabled and merged back into the dispatching AIMessage by message position rather than message id
 12. **TitleMiddleware** - Auto-generates thread title after first complete exchange and normalizes structured message content before prompting the title model
-13. **MemoryMiddleware** - Queues conversations for async memory update (filters to user + final AI responses)
+13. **MemoryMiddleware** - Queues conversations for async memory update (filters to user + final AI responses); resolves the target user from runtime context so background MMKB updates preserve workspace + user isolation
 14. **ViewImageMiddleware** - Injects base64 image data before LLM call (conditional on vision support)
 15. **DeferredToolFilterMiddleware** - Hides deferred tool schemas from the bound model until tool search is enabled (optional)
 16. **SubagentLimitMiddleware** - Truncates excess `task` tool calls from model response to enforce `MAX_CONCURRENT_SUBAGENTS` limit (optional, if `subagent_enabled`)
@@ -314,6 +314,11 @@ Proxied through nginx: `/api/langgraph/*` → Gateway LangGraph-compatible runti
 **Execution**: Dual thread pool - `_scheduler_pool` (3 workers) + `_execution_pool` (3 workers)
 **Concurrency**: `MAX_CONCURRENT_SUBAGENTS = 3` enforced by `SubagentLimitMiddleware` (truncates excess tool calls in `after_model`), 15-minute timeout
 **Flow**: `task()` tool → `SubagentExecutor` → background thread → poll 5s → SSE events → result
+**Delegated runtime context**: `task()` copies only an explicit allowlist of
+parent runtime values into `SubagentExecutor`. This currently includes
+`configurable.mmkb_bearer_token` plus MMKB `public_base_url` and identity
+context, allowing delegated RAG tools to retain the same workspace-scoped
+authorization without exposing arbitrary parent configuration to subagents.
 **Events**: `task_started`, `task_running`, `task_completed`/`task_failed`/`task_timed_out`
 
 ### Tool System (`packages/harness/deerflow/tools/`)
@@ -430,7 +435,7 @@ Bridges external messaging platforms (Feishu, Slack, Telegram, DingTalk) to the 
 - **Facts**: Discrete facts with `id`, `content`, `category` (preference/knowledge/context/behavior/goal), `confidence` (0-1), `createdAt`, `source`
 
 **Workflow**:
-1. `MemoryMiddleware` filters messages (user inputs + final AI responses), captures `user_id` via `get_effective_user_id()`, and queues conversation with the captured `user_id`
+1. `MemoryMiddleware` filters messages (user inputs + final AI responses), captures `user_id` via `resolve_runtime_user_id(runtime)`, and queues conversation with the captured `user_id`
 2. Queue debounces (30s default), batches updates, deduplicates per-thread
 3. Background thread invokes LLM to extract context updates and facts, using the stored `user_id` (not the contextvar, which is unavailable on timer threads)
 4. Applies updates atomically (temp file + rename) with cache invalidation, skipping duplicate fact content before append

@@ -83,6 +83,6 @@ DeerFlow 侧的 MMKB 集成改动、实现目的和维护注意事项见：
 MMKB 侧的完整部署、集成架构和 Agent 适配器说明见 MMKB 仓库的 `docs/`
 目录，重点包括：
 
-- `docs/DEERFLOW_DEPLOY.md`
+- `docs/DEERFLOW_DEPLOYMENT_STATUS.md`
 - `docs/DEERFLOW_INTEGRATION.md`
 - `docs/DEERFLOW_AGENT_ADAPTER.md`

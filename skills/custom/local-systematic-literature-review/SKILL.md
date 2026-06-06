@@ -63,6 +63,10 @@ description: 当用户要求基于本地知识库中的多篇论文、报告、�
 
 禁止把 MMKB 返回的 `input_file_path`、`markdown_merged_path`、`markdown_image_dir_path`、`md_asset_base`、`image_abs` 或任何 `/home/.../storage/...`、`documents/.../markdown/...` 一类路径交给 `grep`、`read_file`、`bash`、`ls` 等文件/命令工具。那些路径是 MMKB 服务端元数据或 URL 线索，不是 DeerFlow sandbox 内可读文件。需要正文时用 `rag_get_document_preview` 或 `rag_get_document_chunks`；需要图片时用 `rag_get_document_assets` 或 `rag_search` 返回的 `image_url`。
 
+面向用户输出本地文档或图片链接时，只能逐字复制 `rag_*` 工具返回的
+`document_url`、`image_url` 等现成 URL。禁止根据 `document_id` 手写、
+拼接、重排或猜测 URL；工具未返回 URL 时，只展示标题与证据 ID。
+
 ## 工作流
 
 严格按以下阶段执行。

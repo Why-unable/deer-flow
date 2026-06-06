@@ -27,6 +27,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Only these caller-provided values are needed by MMKB RAG tools in subagents.
+# Keep the allowlist narrow so unrelated parent runtime configuration and
+# secrets are not copied into delegated executions.
+_SUBAGENT_CONFIGURABLE_KEYS = ("mmkb_bearer_token",)
+_SUBAGENT_CONTEXT_KEYS = (
+    "public_base_url",
+    "mmkb_workspace_id",
+    "mmkb_user_id",
+    "mmkb_tenant_id",
+)
+
 # Cache subagent token usage by tool_call_id so TokenUsageMiddleware can
 # write it back to the triggering AIMessage's usage_metadata.
 _subagent_usage_cache: dict[str, dict[str, int]] = {}
@@ -172,6 +183,25 @@ def _get_runtime_app_config(runtime: Any) -> "AppConfig | None":
     return None
 
 
+def _get_subagent_runtime_values(runtime: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Extract the narrow parent runtime subset delegated tools may need."""
+    if runtime is None:
+        return {}, {}
+
+    runtime_config = getattr(runtime, "config", None)
+    configurable = runtime_config.get("configurable") if isinstance(runtime_config, dict) else None
+    if not isinstance(configurable, dict):
+        configurable = {}
+
+    context = getattr(runtime, "context", None)
+    if not isinstance(context, dict):
+        context = {}
+
+    inherited_configurable = {key: configurable[key] for key in _SUBAGENT_CONFIGURABLE_KEYS if configurable.get(key) is not None}
+    inherited_context = {key: context[key] for key in _SUBAGENT_CONTEXT_KEYS if context.get(key) is not None}
+    return inherited_configurable, inherited_context
+
+
 def _merge_skill_allowlists(parent: list[str] | None, child: list[str] | None) -> list[str] | None:
     """Return the effective subagent skill allowlist under the parent policy."""
     if parent is None:
@@ -269,6 +299,8 @@ async def task_tool(
         # Get or generate trace_id for distributed tracing
         trace_id = metadata.get("trace_id") or str(uuid.uuid4())[:8]
 
+    inherited_configurable, inherited_context = _get_subagent_runtime_values(runtime)
+
     parent_available_skills = metadata.get("available_skills")
     if parent_available_skills is not None:
         overrides["skills"] = _merge_skill_allowlists(list(parent_available_skills), config.skills)
@@ -306,6 +338,8 @@ async def task_tool(
         "thread_data": thread_data,
         "thread_id": thread_id,
         "trace_id": trace_id,
+        "inherited_configurable": inherited_configurable,
+        "inherited_context": inherited_context,
     }
     if resolved_app_config is not None:
         executor_kwargs["app_config"] = resolved_app_config

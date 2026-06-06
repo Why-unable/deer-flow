@@ -490,6 +490,48 @@ class TestAsyncExecutionPath:
         assert result.completed_at is not None
 
     @pytest.mark.anyio
+    async def test_aexecute_passes_inherited_runtime_values_to_subagent(self, classes, base_config, msg):
+        """Approved parent auth/context values reach tools in the subagent run."""
+        SubagentExecutor = classes["SubagentExecutor"]
+        captured = {}
+        final_state = {"messages": [msg.ai("done", "msg-1")]}
+
+        async def capturing_astream(state, *, config, context, stream_mode):
+            captured["config"] = config
+            captured["context"] = context
+            captured["stream_mode"] = stream_mode
+            yield final_state
+
+        mock_agent = MagicMock()
+        mock_agent.astream = capturing_astream
+        executor = SubagentExecutor(
+            config=base_config,
+            tools=[],
+            thread_id="child-thread",
+            inherited_configurable={"mmkb_bearer_token": "Bearer workspace:key"},
+            inherited_context={
+                "public_base_url": "https://mmkb.example",
+                "mmkb_workspace_id": "workspace",
+                "mmkb_user_id": "user",
+            },
+        )
+
+        with patch.object(executor, "_create_agent", return_value=mock_agent):
+            await executor._aexecute("Use RAG")
+
+        assert captured["config"]["configurable"] == {
+            "mmkb_bearer_token": "Bearer workspace:key",
+            "thread_id": "child-thread",
+        }
+        assert captured["context"] == {
+            "public_base_url": "https://mmkb.example",
+            "mmkb_workspace_id": "workspace",
+            "mmkb_user_id": "user",
+            "thread_id": "child-thread",
+        }
+        assert captured["stream_mode"] == "values"
+
+    @pytest.mark.anyio
     async def test_aexecute_collects_ai_messages(self, classes, base_config, mock_agent, msg):
         """Test that AI messages are collected during streaming."""
         SubagentExecutor = classes["SubagentExecutor"]

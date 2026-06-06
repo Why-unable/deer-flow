@@ -111,6 +111,24 @@ config 和 SOUL。
 - 当用户目录只有 `memory.json` 时，config 会 fallback；
 - 同样条件下 SOUL 也会 fallback。
 
+### Memory 文件结构修复与运行时用户解析
+
+相关文件：
+
+- `backend/packages/harness/deerflow/agents/memory/storage.py`
+- `backend/packages/harness/deerflow/agents/middlewares/memory_middleware.py`
+- `backend/tests/test_memory_storage.py`
+- `backend/tests/test_memory_middleware_user_context.py`
+
+用户级 `memory.json` 可能因旧版本、迁移或人工初始化而只包含 `{}`。
+该内容虽然是合法 JSON，但缺少更新器要求的 `user`、`history` 和 `facts`
+字段，会导致异步 memory 更新失败并持续保持空文件。
+
+现在读取 memory 时会补齐缺失的标准结构，同时保留已有摘要、facts 和未知
+扩展字段。`MemoryMiddleware` 也会优先从 LangGraph runtime context 解析
+`user_id`，确保 MMKB 请求在后台 memory 更新阶段仍写入对应的
+`mmkb-<workspace>-<user>` bucket，而不是回退到 `default`。
+
 ## 自定义 MMKB RAG 工具
 
 相关文件：
@@ -138,11 +156,19 @@ config 和 SOUL。
   `http://host.docker.internal:8000`，用于 Docker 容器访问宿主机上的 MMKB。
 - runtime 中的 `public_base_url` 优先用于把返回 URL 绝对化。
 - runtime 中的 `mmkb_bearer_token` 会作为 `Authorization` header。
+- lead agent 使用 `task` 派发子 Agent 时，会通过白名单把
+  `mmkb_bearer_token`、`public_base_url` 和 MMKB 身份上下文传入子 Agent
+  runtime；因此子 Agent 调用 `rag_*` 时继续使用同一 workspace 范围的鉴权，
+  不会因为 delegated run 丢失 bearer 而返回 `401`。其他父运行时配置和
+  secret 不会被自动复制。
 - HTTP 失败会作为 JSON error object 返回，而不是直接 raise。
 - 相对的 `*_url`、`*_path`、`*_base` 字段会尽量转换为绝对 URL。
 - 工具 docstring 明确提示：MMKB 返回的 `markdown_merged_path` 等路径是
   API 元数据，不是 sandbox 内可读文件。Agent 不应把这些路径传给
   `read_file`、`grep` 或 `bash`。
+- research agent 和本地研究 skills 要求面向用户的文档/图片链接只能逐字
+  复制 `rag_*` 返回的 `document_url`、`image_url`，禁止根据
+  `document_id` 手写或猜测链接，避免模型改坏 UUID 后产生不可用 URL。
 - `research-analyst` SOUL、`local-deep-research` 和
   `local-systematic-literature-review` 也显式强化了同一约束：本地知识库
   文档内容只能通过 `rag_*` 工具读取，禁止把 MMKB 返回的服务端路径传给
@@ -504,6 +530,10 @@ git rm --cached .env
 | `backend/app/gateway/authz.py` | 新增 MMKB proxy run-create bypass | 允许 MMKB 已鉴权 run 在无 DeerFlow UI auth 下创建 |
 | `backend/app/gateway/services.py` | 新增 MMKB context merge 和 runtime user 解析 | workspace+user memory 隔离 |
 | `backend/packages/harness/deerflow/config/agents_config.py` | fallback 只要求用户级 `config.yaml` 存在 | 共享 agent 定义、用户级 memory |
+| `backend/packages/harness/deerflow/agents/memory/storage.py` | 自动补全不完整的 memory JSON 结构 | 避免 `{}` 导致长期 memory 更新失败 |
+| `backend/packages/harness/deerflow/agents/middlewares/memory_middleware.py` | 从 runtime context 解析 memory user id | 后台更新保持 workspace+user 隔离 |
+| `backend/packages/harness/deerflow/tools/builtins/task_tool.py` | 白名单提取父运行时的 MMKB 鉴权与身份上下文 | 子 Agent 的 RAG 工具继续使用同一 workspace 权限 |
+| `backend/packages/harness/deerflow/subagents/executor.py` | 将白名单运行时值合并进 delegated run | 避免子 Agent 调用 MMKB 时因 bearer 丢失而 `401` |
 | `skills/public/ppt-generation/SKILL.md` | 增加 MMKB/OpenWebUI 多轮计划规则 | plan JSON 必须回显到正文，避免依赖跨 thread 文件 |
 | `backend/packages/harness/deerflow/tools/custom/__init__.py` | custom tools package marker | MMKB tools import path |
 | `backend/packages/harness/deerflow/tools/custom/rag/__init__.py` | RAG tools package marker | MMKB tools import path |
@@ -570,5 +600,7 @@ docker logs --tail 100 deer-flow-gateway
 
 - `model=agent` 能在没有 DeerFlow UI auth 的情况下启动 run；
 - RAG 工具能收到 MMKB bearer 并返回 document/search 结果；
+- lead agent 派发的子 Agent 也能使用 `rag_*`，且不会因 bearer 丢失返回
+  `401`；
 - memory 写入预期的 `mmkb-<workspace>-<user>` user bucket；
 - MMKB/OpenWebUI 路径中没有 `401`、`403` 或 CSRF 错误。

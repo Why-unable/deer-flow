@@ -40,6 +40,35 @@ def create_empty_memory() -> dict[str, Any]:
     }
 
 
+def normalize_memory(memory_data: Any) -> dict[str, Any]:
+    """Fill missing required fields while preserving valid stored memory."""
+    empty_memory = create_empty_memory()
+    if not isinstance(memory_data, dict):
+        return empty_memory
+
+    normalized = dict(memory_data)
+    normalized.setdefault("version", empty_memory["version"])
+    normalized.setdefault("lastUpdated", empty_memory["lastUpdated"])
+
+    for group in ("user", "history"):
+        stored_group = memory_data.get(group)
+        if not isinstance(stored_group, dict):
+            stored_group = {}
+
+        normalized_group = dict(stored_group)
+        for section, empty_section in empty_memory[group].items():
+            stored_section = stored_group.get(section)
+            if not isinstance(stored_section, dict):
+                stored_section = {}
+            normalized_group[section] = {**empty_section, **stored_section}
+        normalized[group] = normalized_group
+
+    if not isinstance(normalized.get("facts"), list):
+        normalized["facts"] = []
+
+    return normalized
+
+
 class MemoryStorage(abc.ABC):
     """Abstract base class for memory storage providers."""
 
@@ -111,7 +140,7 @@ class FileMemoryStorage(MemoryStorage):
         try:
             with open(file_path, encoding="utf-8") as f:
                 data = json.load(f)
-            return data
+            return normalize_memory(data)
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to load memory file: %s", e)
             return create_empty_memory()

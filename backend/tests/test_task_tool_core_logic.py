@@ -180,6 +180,63 @@ def test_task_tool_threads_runtime_app_config_to_subagent_dependencies(monkeypat
     assert captured["executor_kwargs"]["tools"] == ["tool-a"]
 
 
+def test_task_tool_inherits_only_approved_mmkb_runtime_values(monkeypatch):
+    config = _make_subagent_config()
+    runtime = _make_runtime()
+    runtime.config["configurable"] = {
+        "mmkb_bearer_token": "Bearer workspace:key",
+        "unrelated_secret": "do-not-copy",
+    }
+    runtime.context.update(
+        {
+            "public_base_url": "https://mmkb.example",
+            "mmkb_workspace_id": "workspace",
+            "mmkb_user_id": "user",
+            "mmkb_tenant_id": "tenant",
+            "unrelated_context": "do-not-copy",
+        }
+    )
+    captured = {}
+
+    class DummyExecutor:
+        def __init__(self, **kwargs):
+            captured["executor_kwargs"] = kwargs
+
+        def execute_async(self, prompt, task_id=None):
+            return task_id or "generated-task-id"
+
+    monkeypatch.setattr(task_tool_module, "SubagentStatus", FakeSubagentStatus)
+    monkeypatch.setattr(task_tool_module, "SubagentExecutor", DummyExecutor)
+    monkeypatch.setattr(task_tool_module, "get_subagent_config", lambda _: config)
+    monkeypatch.setattr(
+        task_tool_module,
+        "get_background_task_result",
+        lambda _: _make_result(FakeSubagentStatus.COMPLETED, result="done"),
+    )
+    monkeypatch.setattr(task_tool_module, "get_stream_writer", lambda: lambda _: None)
+    monkeypatch.setattr(task_tool_module.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr("deerflow.tools.get_available_tools", MagicMock(return_value=[]))
+
+    output = _run_task_tool(
+        runtime=runtime,
+        description="读取知识库",
+        prompt="inspect documents",
+        subagent_type="general-purpose",
+        tool_call_id="tc-runtime-context",
+    )
+
+    assert output == "Task Succeeded. Result: done"
+    assert captured["executor_kwargs"]["inherited_configurable"] == {
+        "mmkb_bearer_token": "Bearer workspace:key",
+    }
+    assert captured["executor_kwargs"]["inherited_context"] == {
+        "public_base_url": "https://mmkb.example",
+        "mmkb_workspace_id": "workspace",
+        "mmkb_user_id": "user",
+        "mmkb_tenant_id": "tenant",
+    }
+
+
 def test_task_tool_emits_running_and_completed_events(monkeypatch):
     config = _make_subagent_config()
     runtime = _make_runtime()

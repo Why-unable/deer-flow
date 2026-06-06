@@ -10,6 +10,7 @@ from deerflow.agents.memory.storage import (
     MemoryStorage,
     create_empty_memory,
     get_memory_storage,
+    normalize_memory,
 )
 from deerflow.config.memory_config import MemoryConfig
 
@@ -26,6 +27,34 @@ class TestCreateEmptyMemory:
         assert isinstance(memory["user"], dict)
         assert isinstance(memory["history"], dict)
         assert isinstance(memory["facts"], list)
+
+
+class TestNormalizeMemory:
+    """Test repair of incomplete persisted memory."""
+
+    def test_empty_dict_gets_required_structure(self):
+        """A valid but empty JSON object should become updateable memory."""
+        memory = normalize_memory({})
+
+        assert memory["version"] == "1.0"
+        assert memory["user"]["workContext"]["summary"] == ""
+        assert memory["history"]["recentMonths"]["summary"] == ""
+        assert memory["facts"] == []
+
+    def test_preserves_existing_memory_and_unknown_fields(self):
+        """Normalization should retain existing summaries and extension fields."""
+        memory = normalize_memory(
+            {
+                "user": {"workContext": {"summary": "Existing context"}},
+                "facts": [{"content": "Existing fact"}],
+                "custom": {"enabled": True},
+            }
+        )
+
+        assert memory["user"]["workContext"]["summary"] == "Existing context"
+        assert memory["user"]["personalContext"]["summary"] == ""
+        assert memory["facts"] == [{"content": "Existing fact"}]
+        assert memory["custom"] == {"enabled": True}
 
 
 class TestMemoryStorageInterface:
@@ -92,6 +121,24 @@ class TestFileMemoryStorage:
                 memory = storage.load()
                 assert isinstance(memory, dict)
                 assert memory["version"] == "1.0"
+
+    def test_load_normalizes_empty_json_object(self, tmp_path):
+        """Should repair an existing {} file before the updater uses it."""
+        memory_file = tmp_path / "memory.json"
+        memory_file.write_text("{}", encoding="utf-8")
+
+        def mock_get_paths():
+            mock_paths = MagicMock()
+            mock_paths.memory_file = memory_file
+            return mock_paths
+
+        with patch("deerflow.agents.memory.storage.get_paths", side_effect=mock_get_paths):
+            with patch("deerflow.agents.memory.storage.get_memory_config", return_value=MemoryConfig(storage_path="")):
+                memory = FileMemoryStorage().load()
+
+        assert memory["user"]["workContext"]["summary"] == ""
+        assert memory["history"]["recentMonths"]["summary"] == ""
+        assert memory["facts"] == []
 
     def test_save_writes_to_file(self, tmp_path):
         """Should save memory data to file."""

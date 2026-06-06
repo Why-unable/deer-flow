@@ -279,6 +279,8 @@ class SubagentExecutor:
         thread_data: ThreadDataState | None = None,
         thread_id: str | None = None,
         trace_id: str | None = None,
+        inherited_configurable: dict[str, Any] | None = None,
+        inherited_context: dict[str, Any] | None = None,
     ):
         """Initialize the executor.
 
@@ -293,6 +295,10 @@ class SubagentExecutor:
             thread_data: Thread data from parent agent.
             thread_id: Thread ID for sandbox operations.
             trace_id: Trace ID from parent for distributed tracing.
+            inherited_configurable: Approved parent RunnableConfig configurable
+                values needed by delegated tools.
+            inherited_context: Approved parent runtime context values needed by
+                delegated tools.
         """
         self.config = config
         self.app_config = app_config
@@ -307,6 +313,8 @@ class SubagentExecutor:
         self.sandbox_state = sandbox_state
         self.thread_data = thread_data
         self.thread_id = thread_id
+        self.inherited_configurable = dict(inherited_configurable or {})
+        self.inherited_context = dict(inherited_context or {})
         # Generate trace_id if not provided (for top-level calls)
         self.trace_id = trace_id or str(uuid.uuid4())[:8]
 
@@ -488,10 +496,13 @@ class SubagentExecutor:
                 "callbacks": [collector],
                 "tags": [collector_caller],
             }
-            context: dict[str, Any] = {}
+            configurable = dict(self.inherited_configurable)
+            context: dict[str, Any] = dict(self.inherited_context)
             if self.thread_id:
-                run_config["configurable"] = {"thread_id": self.thread_id}
+                configurable["thread_id"] = self.thread_id
                 context["thread_id"] = self.thread_id
+            if configurable:
+                run_config["configurable"] = configurable
             if self.app_config is not None:
                 context["app_config"] = self.app_config
 
