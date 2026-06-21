@@ -67,13 +67,16 @@ deer-flow/
 ## Important Development Guidelines
 
 ### Documentation Update Policy
-**CRITICAL: Always update README.md and CLAUDE.md after every code change**
+**CRITICAL: Keep affected documentation synchronized with code changes**
 
-When making code changes, you MUST update the relevant documentation:
+When making code changes, update documentation according to the affected scope:
 - Update `README.md` for user-facing changes (features, setup, usage instructions)
 - Update `CLAUDE.md` for development changes (architecture, commands, workflows, internal systems)
+- Update MMKB integration documents when MMKB behavior or link lifecycles change
 - Keep documentation synchronized with the codebase at all times
 - Ensure accuracy and timeliness of all documentation
+
+Documentation-only changes do not require unrelated README or CLAUDE updates.
 
 ## Commands
 
@@ -261,6 +264,61 @@ FastAPI application on port 8001 with health check at `GET /health`. Set `GATEWA
 CORS is same-origin by default when requests enter through nginx on port 2026. Split-origin or port-forwarded browser clients must opt in with `GATEWAY_CORS_ORIGINS` (comma-separated exact origins); Gateway `CORSMiddleware` and `CSRFMiddleware` both read that variable so browser CORS and auth-origin checks stay aligned.
 
 **MMKB proxy integration**: MMKB's OpenAI-compatible `model=agent` proxy calls `POST /api/threads/{thread_id}/runs/stream` after authenticating its own client. The proxy forwards the original opaque `Bearer workspace_id:secret` token as `config.configurable.mmkb_bearer_token`; `require_permission("runs", "create")` allows only those run-create requests to pass without DeerFlow UI auth so the custom RAG tools can replay the token against MMKB's workspace-scoped APIs. MMKB also sends top-level `context.public_base_url`; `merge_run_context_overrides()` copies that value into both `configurable` and LangGraph `context` so returned markdown/image URLs can be absolutized.
+
+RAG tool-selection guidance separates topical retrieval from inventory work:
+ordinary local-knowledge questions use `rag_search` as the default entry point,
+while `rag_list_documents` is for document inventory, scope discovery, and
+candidate-pool construction for multi-document reviews. The
+`local-deep-research` skill permits a lightweight single-search path when
+evidence is sufficient; `local-systematic-literature-review` retains the
+inventory-first workflow for explicitly multi-document synthesis.
+
+MMKB RAG response link handling is centralized in
+`packages/harness/deerflow/tools/custom/rag/mmkb_links.py`. DeerFlow only
+absolutizes relative `*_url`, `*_path`, and `*_base` fields; MMKB remains
+responsible for signing protected document media. Every RAG tool response emits
+one aggregation-friendly `mmkb_link_stage4` log containing counts only. A
+non-zero `protected_media_remaining` indicates that MMKB returned a protected
+`/api/documents/.../media/...` URL that an external chat frontend may not be
+able to load without a bearer token.
+
+Visual asset retrieval uses a two-stage contract. `rag_get_document_assets`
+returns a bounded, paginated compact catalog with complete signed URLs and
+truncated caption previews, while `rag_get_document_asset(document_id,
+asset_id)` returns a leading URL manifest and one asset's complete OCR,
+metadata, and fields. This keeps catalog results below the tool-output
+externalization threshold and prevents models from inventing URLs for assets
+omitted from a head/tail preview.
+
+Custom MMKB RAG tools use a layered integration under
+`packages/harness/deerflow/tools/custom/rag/`:
+
+- `tools.py` owns LangChain tool schemas, validation, docstrings, and JSON output.
+- `context.py` resolves static tool settings plus request-scoped bearer/public URL.
+- `client.py` defines the transport-neutral semantic `MMKBClient` protocol and
+  implements the current HTTP endpoint mapping in `HTTPMMKBClient`.
+- `service.py` applies shared link processing/logging over any `MMKBClient`.
+- `assets.py` owns bounded catalog projection and exact-asset selection policy.
+- `mmkb_links.py` owns stage-4 URL absolutization and aggregate observability.
+- `utils/mmkb_resource_validation.py` performs structure-only MMKB media URL
+  validation plus document-page shape/origin checks without logging tokens,
+  document IDs, or requiring MMKB's signing secret.
+
+Keep transport details out of `tools.py` and response policies out of client
+implementations. A future MCP transport should implement the semantic
+`MMKBClient` methods and reuse `MMKBService`, `assets.py`, and existing policy
+tests instead of duplicating tool behavior.
+
+`MMKBService` emits `mmkb_tool_resource_validation` after processing every tool
+response. `RunJournal` emits `assistant_resource_validation` plus a persisted
+`assistant.resource.validation` trace event for final, non-tool-calling lead
+agent messages that contain MMKB resource URLs. Compare these two layers by
+`thread_id`/`run_id`: tool failure points to the MMKB response or tool policy,
+while tool success plus assistant failure points to model-output corruption.
+These checks validate token structure only; cryptographic validity and expiry
+remain MMKB responsibilities. Ordinary `/documents/<uuid>` links are also
+counted and checked against the run's expected `public_base_url`; they still
+require a browser login and a current workspace matching the document.
 
 **Routers**:
 
@@ -533,11 +591,17 @@ Both can be modified at runtime via Gateway API endpoints or `DeerFlowClient` me
 
 ### Test-Driven Development (TDD) — MANDATORY
 
-**Every new feature or bug fix MUST be accompanied by unit tests. No exceptions.**
+**Every new feature or bug fix MUST include relevant automated tests unless it
+cannot be tested automatically; document the reason when no automated test is
+added.**
 
 - Write tests in `backend/tests/` following the existing naming convention `test_<feature>.py`
-- Run the full suite before and after your change: `make test`
-- Tests must pass before a feature is considered complete
+- During development, run the smallest relevant tests first
+- Run the full backend suite before completion when changing shared contracts,
+  runtime boundaries, authentication, persistence, or broadly used behavior
+- For narrow isolated changes, run all directly affected tests and state any
+  remaining full-suite risk
+- Executed tests must pass before a feature is considered complete
 - For lightweight config/utility modules, prefer pure unit tests with no external dependencies
 - If a module causes circular import issues in tests, add a `sys.modules` mock in `tests/conftest.py` (see existing example for `deerflow.subagents.executor`)
 

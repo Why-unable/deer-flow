@@ -1,8 +1,9 @@
 """Tests for memory prompt injection formatting."""
 
 import math
+from types import SimpleNamespace
 
-from deerflow.agents.memory.prompt import _coerce_confidence, format_memory_for_injection
+from deerflow.agents.memory.prompt import _coerce_confidence, format_conversation_for_update, format_memory_for_injection
 
 
 def test_format_memory_includes_facts_section() -> None:
@@ -20,6 +21,47 @@ def test_format_memory_includes_facts_section() -> None:
     assert "Facts:" in result
     assert "User uses PostgreSQL" in result
     assert "User prefers SQLAlchemy" in result
+
+
+def test_format_memory_sanitizes_thread_scoped_artifact_paths() -> None:
+    memory_data = {
+        "user": {
+            "topOfMind": {
+                "summary": "Report saved at /mnt/user-data/outputs/lithium-battery-research-report.md."
+            }
+        },
+        "history": {},
+        "facts": [
+            {
+                "content": "Download link: https://mmkb.example/api/deerflow/artifacts/signed-token",
+                "category": "context",
+                "confidence": 1.0,
+            }
+        ],
+    }
+
+    result = format_memory_for_injection(memory_data, max_tokens=2000)
+
+    assert "/mnt/user-data/outputs/" not in result
+    assert "/api/deerflow/artifacts/" not in result
+    assert "历史生成文件：lithium-battery-research-report.md" in result
+    assert "历史生成文件下载链接已省略" in result
+
+
+def test_format_conversation_for_update_sanitizes_artifact_paths() -> None:
+    messages = [
+        SimpleNamespace(
+            type="ai",
+            content="完整报告：/mnt/user-data/outputs/report.md，可下载 https://mmkb.example/api/agent/artifacts/token",
+        )
+    ]
+
+    result = format_conversation_for_update(messages)
+
+    assert "/mnt/user-data/outputs/" not in result
+    assert "/api/agent/artifacts/" not in result
+    assert "历史生成文件：report.md" in result
+    assert "历史生成文件下载链接已省略" in result
 
 
 def test_format_memory_sorts_facts_by_confidence_desc() -> None:

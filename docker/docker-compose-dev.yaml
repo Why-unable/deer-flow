@@ -5,6 +5,7 @@
 #   - nginx: Reverse proxy (port 2026)
 #   - frontend: Frontend Next.js dev server (port 3000)
 #   - gateway: Backend Gateway API + agent runtime (port 8001)
+#   - monitor (optional profile): Container memory + MMKB resource diagnostics (port 9090)
 #   - provisioner (optional): Sandbox provisioner (creates Pods in host Kubernetes)
 #
 # Prerequisites:
@@ -13,6 +14,20 @@
 # Access: http://localhost:2026
 
 services:
+  monitor:
+    profiles: ["monitor"]
+    build:
+      context: ../monitor
+    container_name: deer-flow-monitor
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../logs:/logs:ro
+    networks:
+      - deer-flow-dev
+    restart: unless-stopped
+
   # ── Sandbox Provisioner ────────────────────────────────────────────────
   # Manages per-sandbox Pod + Service lifecycle in the host Kubernetes
   # cluster via the K8s API.

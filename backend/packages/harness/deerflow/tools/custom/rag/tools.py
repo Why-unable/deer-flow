@@ -1,125 +1,58 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Annotated, Any, Literal
 
-import httpx
 from langchain.tools import tool
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import InjectedToolArg
 
-from deerflow.config import get_app_config
-
-DEFAULT_BASE_URL = "http://host.docker.internal:8000"
-DEFAULT_TIMEOUT = 30.0
-
-
-def _tool_settings(tool_name: str) -> tuple[str, float]:
-    config = get_app_config().get_tool_config(tool_name)
-    extra = config.model_extra if config is not None else {}
-    base_url = str(extra.get("base_url") or DEFAULT_BASE_URL).rstrip("/")
-    timeout = float(extra.get("timeout") or DEFAULT_TIMEOUT)
-    return base_url, timeout
-
-
-def _resolve_public_base_url(config: RunnableConfig | None, *, tool_name: str) -> str:
-    """Return the public-facing base URL for absolutizing user-visible links.
-
-    Precedence:
-    1. ``public_base_url`` from the runtime configurable (set by the caller, e.g.
-       mmkb's chat_completion proxy).
-    2. The tool's static ``base_url`` config (typically an internal host like
-       ``host.docker.internal`` — useful as a fallback when the caller does not
-       pass a public URL).
-    """
-    configurable = dict(_config_get(config, "configurable") or {})
-    context = dict(_config_get(config, "context") or {})
-    public_base_url = str(configurable.get("public_base_url") or context.get("public_base_url") or "").strip().rstrip("/")
-    if public_base_url:
-        return public_base_url
-    base_url, _ = _tool_settings(tool_name)
-    return base_url
+from deerflow.tools.custom.rag.assets import (
+    ASSET_CATALOG_DEFAULT_LIMIT,
+    ASSET_CATALOG_MAX_LIMIT,
+)
+from deerflow.tools.custom.rag.assets import (
+    compact_asset_catalog as _compact_asset_catalog,
+)
+from deerflow.tools.custom.rag.assets import (
+    select_document_asset as _select_document_asset,
+)
+from deerflow.tools.custom.rag.service import (
+    build_mmkb_service as _build_mmkb_service,
+)
 
 
 def _json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
-def _request_json(
-    tool_name: str,
-    path: str,
-    params: dict[str, Any] | None = None,
-    *,
-    headers: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    base_url, timeout = _tool_settings(tool_name)
-    try:
-        with httpx.Client(timeout=timeout, trust_env=False) as client:
-            response = client.get(f"{base_url}{path}", params=params, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-    except httpx.HTTPStatusError as exc:
-        return {
-            "error": "rag_http_error",
-            "status_code": exc.response.status_code,
-            "body": exc.response.text[:2000],
-        }
-    except Exception as exc:
-        return {
-            "error": "rag_request_failed",
-            "detail": f"{type(exc).__name__}: {exc}",
-        }
-    return data
+_PREVIEW_RAW_IMAGE_PATTERN = re.compile(
+    r"!\[[^\]\n]*\]\("
+    r"[^)\n]*(?:md_images/|/api/documents/[^)\n]*/media/|documents/[^)\n]*/markdown/)[^)\n]*"
+    r"\)(?:\s*<!--IMG_META:.*?-->)?",
+    re.DOTALL,
+)
+_PREVIEW_IMAGE_META_PATTERN = re.compile(r"<!--IMG_META:.*?-->", re.DOTALL)
+_PREVIEW_IMAGE_PLACEHOLDER = (
+    "[图片链接已省略：preview 不提供可展示图片 URL；"
+    "需要展示图片请调用 rag_get_document_assets 或 rag_get_document_asset，"
+    "并逐字复制返回的 image_url。]"
+)
 
 
-def _absolutize_urls(value: Any, base_url: str) -> Any:
-    """Absolutize API-returned relative URLs so the LLM can reference them."""
-    if isinstance(value, dict):
-        return {key: _absolutize_url_field(key, item, base_url) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_absolutize_urls(item, base_url) for item in value]
-    return value
+def _sanitize_preview_text(text: str) -> tuple[str, int, int]:
+    """Remove raw markdown image references that are not user-visible URLs."""
+    image_links_removed = 0
 
+    def replace_raw_image(_match: re.Match[str]) -> str:
+        nonlocal image_links_removed
+        image_links_removed += 1
+        return _PREVIEW_IMAGE_PLACEHOLDER
 
-_URL_KEY_SUFFIXES = ("_url", "_path", "_base")
-
-
-def _absolutize_url_field(key: str, value: Any, base_url: str) -> Any:
-    if isinstance(value, str) and value.startswith("/") and any(key.endswith(suffix) for suffix in _URL_KEY_SUFFIXES):
-        return f"{base_url}{value}"
-    return _absolutize_urls(value, base_url)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Shared helper for tools that need runtime config (public_base_url, etc.)
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-def _config_get(config: RunnableConfig | None, key: str, default: Any = None) -> Any:
-    """Read a value from RunnableConfig which may be a dict or an object."""
-    if config is None:
-        return default
-    if isinstance(config, dict):
-        return config.get(key, default)
-    return getattr(config, key, default)
-
-
-def _fetch_and_absolutize(
-    tool_name: str,
-    path: str,
-    params: dict[str, Any] | None = None,
-    *,
-    config: RunnableConfig | None = None,
-) -> Any:
-    """Request JSON from the local knowledge-base API and absolutize user-facing URLs."""
-    # mmkb_bearer_token may ride in configurable (direct set) or context
-    # (LangGraph Platform run request `context` field).
-    configurable = dict(_config_get(config, "configurable") or {})
-    context = dict(_config_get(config, "context") or {})
-    bearer_token = str(configurable.get("mmkb_bearer_token") or context.get("mmkb_bearer_token") or "").strip()
-    headers = {"Authorization": bearer_token} if bearer_token else None
-    data = _request_json(tool_name, path, params=params, headers=headers)
-    return _absolutize_urls(data, _resolve_public_base_url(config, tool_name=tool_name))
+    sanitized = _PREVIEW_RAW_IMAGE_PATTERN.sub(replace_raw_image, text)
+    sanitized, image_metadata_removed = _PREVIEW_IMAGE_META_PATTERN.subn("", sanitized)
+    return sanitized, image_links_removed, image_metadata_removed
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -134,10 +67,12 @@ def rag_list_documents_tool(
 ) -> str:
     """List indexed documents that are ready for local knowledge-base search.
 
-    Use this when you need to discover what local files are available before
-    searching or opening a specific document. This tool intentionally returns
-    only documents whose processing status is `ready`; failed, parsing, and
-    indexing documents are excluded.
+    Use this for document inventory and scope discovery, such as listing ready
+    documents or establishing a candidate pool for a multi-document review.
+    Do not call it as a fixed prerequisite for an ordinary topical question;
+    use `rag_search` first when the goal is to answer what local documents say.
+    This tool intentionally returns only documents whose processing status is
+    `ready`; failed, parsing, and indexing documents are excluded.
 
     Returns JSON with:
     - `items`: ready document rows ordered by `updated_at` descending.
@@ -153,7 +88,7 @@ def rag_list_documents_tool(
     sandbox-readable files. Do not pass them to `read_file`, `grep`, `bash`, or
     other sandbox tools; use the RAG tools below to read document content.
 
-    Typical workflow:
+    Typical inventory/review workflow:
     1. Use `rag_list_documents` to discover candidate document IDs.
     2. Use `rag_search` for semantic/keyword retrieval across all ready docs.
     3. Use `rag_get_document_preview`, `rag_get_document_chunks`, or
@@ -164,12 +99,7 @@ def rag_list_documents_tool(
         limit: Maximum number of ready documents to return, capped to 200.
     """
     limit = max(min(int(limit), 200), 1)
-    data = _fetch_and_absolutize(
-        "rag_list_documents",
-        "/api/documents",
-        params={"status": "ready", "limit": limit},
-        config=config,
-    )
+    data = _build_mmkb_service("rag_list_documents", config).list_documents(limit=limit)
     return _json(data)
 
 
@@ -182,9 +112,11 @@ def rag_search_tool(
 ) -> str:
     """Search the local knowledge base's unified text-and-image index.
 
-    Use this first when the user asks about uploaded/local documents. It calls
-    the local knowledge-base search API and leaves answer planning and
-    synthesis to the agent.
+    Use this as the default entry point for ordinary topical questions about
+    uploaded/local documents. It calls the local knowledge-base search API and
+    leaves answer planning and synthesis to the agent. Use
+    `rag_list_documents` instead when the task is document inventory, scope
+    discovery, or candidate-pool construction for a multi-document review.
 
     Retrieval modes:
     - `hybrid`: default and usually best. Combines semantic vector retrieval and
@@ -214,8 +146,8 @@ def rag_search_tool(
     - `from_chunk_ids`: chunk IDs that referenced this image. If `hit` is false
       but this list is non-empty, the image is contextual media associated with
       a matched text chunk.
-    - `image_url`: public image URL when available. You may include it in an
-      answer as Markdown, for example `![caption](image_url)`.
+    - `image_url`: signed public image URL when available. You may include it
+      unchanged in an answer as Markdown, for example `![caption](image_url)`.
     - `caption_or_ocr`: OCR/caption text extracted from the image. Treat it as
       useful but potentially noisy.
     - `image_abs`: server-local file path. Do not show this to the user unless
@@ -242,12 +174,7 @@ def rag_search_tool(
     if not query:
         return _json({"error": "query is required"})
     limit = max(min(int(limit), 50), 1)
-    data = _fetch_and_absolutize(
-        "rag_search",
-        "/api/search",
-        params={"q": query, "mode": mode, "limit": limit},
-        config=config,
-    )
+    data = _build_mmkb_service("rag_search", config).search(query=query, mode=mode, limit=limit)
     return _json(data)
 
 
@@ -282,7 +209,7 @@ def rag_get_document_tool(
     document_id = str(document_id or "").strip()
     if not document_id:
         return _json({"error": "document_id is required"})
-    data = _fetch_and_absolutize("rag_get_document", f"/api/documents/{document_id}", config=config)
+    data = _build_mmkb_service("rag_get_document", config).get_document(document_id=document_id)
     return _json(data)
 
 
@@ -301,13 +228,18 @@ def rag_get_document_preview_tool(
 
     Returns JSON with:
     - `document_id`
-    - `preview_text`: merged markdown content, possibly truncated
+    - `preview_text`: merged markdown content, possibly truncated. Raw markdown
+      image references such as `md_images/...`, protected
+      `/api/documents/<id>/media/...`, and `IMG_META` comments are omitted so
+      they cannot be copied into user-visible output.
     - `truncated`: whether `preview_text` was shortened
     - `total_chars`: original preview length before truncation
+    - `preview_image_links_removed`: number of raw markdown image links omitted,
+      present only when non-zero.
 
-    The markdown may contain relative image links such as `md_images/...`.
     If you need concrete image URLs and OCR/caption metadata, call
-    `rag_get_document_assets` for the same document.
+    `rag_get_document_assets` or `rag_get_document_asset` for the same document
+    and copy the returned `image_url` unchanged.
 
     Args:
         document_id: UUID of the local knowledge-base document.
@@ -317,8 +249,22 @@ def rag_get_document_preview_tool(
     if not document_id:
         return _json({"error": "document_id is required"})
 
-    data = _fetch_and_absolutize("rag_get_document_preview", f"/api/documents/{document_id}/preview", config=config)
-    text = str(data.get("preview_text") or "") if isinstance(data, dict) else ""
+    data = _build_mmkb_service("rag_get_document_preview", config).get_document_preview(document_id=document_id)
+    if not isinstance(data, dict):
+        return _json(data)
+
+    text = str(data.get("preview_text") or "")
+    text, image_links_removed, image_metadata_removed = _sanitize_preview_text(text)
+    data = {**data, "preview_text": text}
+    if image_links_removed:
+        data["preview_image_links_removed"] = image_links_removed
+    if image_metadata_removed:
+        data["preview_image_metadata_removed"] = image_metadata_removed
+    if image_links_removed or image_metadata_removed:
+        data["media_safety_note"] = (
+            "preview_text omits raw markdown image links and IMG_META comments; "
+            "use rag_get_document_assets/rag_get_document_asset for signed image_url."
+        )
     max_chars = max(min(int(max_chars), 50000), 1000)
     if len(text) > max_chars:
         data["preview_text"] = text[:max_chars]
@@ -365,51 +311,94 @@ def rag_get_document_chunks_tool(
     document_id = str(document_id or "").strip()
     if not document_id:
         return _json({"error": "document_id is required"})
-    data = _fetch_and_absolutize("rag_get_document_chunks", f"/api/documents/{document_id}/chunks", config=config)
+    data = _build_mmkb_service("rag_get_document_chunks", config).get_document_chunks(document_id=document_id)
     return _json(data)
 
 
 @tool("rag_get_document_assets", parse_docstring=True)
 def rag_get_document_assets_tool(
     document_id: Annotated[str, "UUID of the local knowledge-base document."],
+    offset: Annotated[int, "Zero-based catalog offset. Use next_page.offset to continue."] = 0,
+    limit: Annotated[int, "Maximum assets in this catalog page (1-10)."] = ASSET_CATALOG_DEFAULT_LIMIT,
     config: Annotated[RunnableConfig, InjectedToolArg] = None,
 ) -> str:
-    """List all extracted visual assets for one document.
+    """List a compact, paginated catalog of extracted visual assets for one document.
 
     Use this when the answer may depend on figures, screenshots, scanned pages,
     image-only documents, charts, tables captured as images, or OCR/caption
-    text associated with visuals. This returns the complete extracted asset set
-    for one document, not just assets matched by a search query.
+    text associated with visuals. This is a discovery tool: each page
+    deliberately omits server-local paths, full metadata, and full OCR so its
+    complete signed URLs remain visible in the model context.
 
     Returns JSON with:
     - `document_id`
-    - `count`
+    - `count`: total assets in the document.
+    - `offset`, `limit`, `returned`, `has_more`, and optional `next_page`.
     - `items`: visual asset rows ordered by page/block/id
 
-    Each asset item includes:
+    Each compact asset item includes:
     - `id`, `asset_type`, `page_id`, `block_id`
-    - `image_url`: public image URL when available. You may use it directly in
-      Markdown, for example `![caption](image_url)`.
-    - `caption_or_ocr`: OCR/caption text. Use it as helpful but potentially
-      imperfect evidence.
-    - `image_path`: parser-local image filename/path inside the markdown image
-      directory
-    - `image_abs`: server-local file path; prefer `image_url` in user responses.
-    - `metadata_json`: parser/storage metadata.
+    - `image_url`: signed public image URL when available. You may use it
+      unchanged in Markdown, for example `![caption](image_url)`.
+    - `video_url`, `video_thumbnail_url`: signed public video/media URLs.
+    - `caption_preview`: whitespace-normalized OCR/caption preview.
+    - `caption_truncated`: whether the preview omits additional text.
 
     Relative image URLs are converted to absolute URLs when the caller provides
     a public base URL. Use this tool together with `rag_search` or
     `rag_get_document_chunks` when you need to place relevant images near a
-    text-based answer.
+    text-based answer. Before making claims from a truncated caption or when you
+    need one asset's complete fields, call `rag_get_document_asset` with the
+    returned document and asset IDs.
 
     Args:
         document_id: UUID of the local knowledge-base document.
+        offset: Zero-based catalog offset. Use the returned next_page offset to continue.
+        limit: Maximum number of compact assets to return, capped to 10.
     """
     document_id = str(document_id or "").strip()
     if not document_id:
         return _json({"error": "document_id is required"})
-    data = _fetch_and_absolutize("rag_get_document_assets", f"/api/documents/{document_id}/assets", config=config)
-    return _json(data)
+    offset = max(int(offset), 0)
+    limit = max(min(int(limit), ASSET_CATALOG_MAX_LIMIT), 1)
+    data = _build_mmkb_service("rag_get_document_assets", config).get_document_assets(document_id=document_id)
+    return _json(_compact_asset_catalog(data, offset=offset, limit=limit))
+
+
+@tool("rag_get_document_asset", parse_docstring=True)
+def rag_get_document_asset_tool(
+    document_id: Annotated[str, "UUID of the local knowledge-base document."],
+    asset_id: Annotated[int, "Numeric asset ID returned by rag_search or rag_get_document_assets."],
+    config: Annotated[RunnableConfig, InjectedToolArg] = None,
+) -> str:
+    """Get the complete details for one visual asset in a document.
+
+    Use this after `rag_get_document_assets` identifies a relevant asset. It
+    returns a leading `media_urls` manifest followed by exactly one complete
+    item with full `caption_or_ocr`, parser metadata, and server-local
+    diagnostic fields. The manifest keeps complete signed URLs visible even
+    when the large detail response is externalized.
+
+    User-facing media links must be copied unchanged from `image_url`,
+    `video_url`, or `video_thumbnail_url`. Never construct or repair a signed
+    URL from another asset.
+
+    Args:
+        document_id: UUID of the document containing the asset.
+        asset_id: Numeric asset ID from the compact catalog or search result.
+    """
+    document_id = str(document_id or "").strip()
+    if not document_id:
+        return _json({"error": "document_id is required"})
+    try:
+        normalized_asset_id = int(asset_id)
+    except (TypeError, ValueError):
+        return _json({"error": "asset_id must be an integer"})
+    if normalized_asset_id <= 0:
+        return _json({"error": "asset_id must be positive"})
+
+    data = _build_mmkb_service("rag_get_document_asset", config).get_document_assets(document_id=document_id)
+    return _json(_select_document_asset(data, normalized_asset_id))
 
 
 @tool("rag_list_collections", parse_docstring=True)
@@ -431,5 +420,5 @@ def rag_list_collections_tool(
     Args:
         config: Runtime configuration injected automatically.
     """
-    data = _fetch_and_absolutize("rag_list_collections", "/api/collections", config=config)
+    data = _build_mmkb_service("rag_list_collections", config).list_collections()
     return _json(data)

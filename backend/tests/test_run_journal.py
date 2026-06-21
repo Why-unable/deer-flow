@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from test_mmkb_resource_validation import DOCUMENT_URL, TRUNCATED_SIGNED_URL, VALID_SIGNED_URL
 
 from deerflow.runtime.events.store.memory import MemoryRunEventStore
 from deerflow.runtime.journal import RunJournal
@@ -110,6 +111,75 @@ class TestLlmCallbacks:
         messages = await store.list_messages("t1")
         # subagent responses still emit llm.ai.response with category="message"
         assert len(messages) == 1
+
+    @pytest.mark.anyio
+    async def test_on_llm_end_records_final_assistant_resource_validation(self, journal_setup):
+        j, store = journal_setup
+
+        j.on_llm_end(
+            _make_llm_response(f"![valid]({VALID_SIGNED_URL})\n![bad]({TRUNCATED_SIGNED_URL})"),
+            run_id=uuid4(),
+            parent_run_id=None,
+            tags=["lead_agent"],
+        )
+        await j.flush()
+
+        events = await store.list_events("t1", "r1")
+        validation_events = [event for event in events if event["event_type"] == "assistant.resource.validation"]
+        assert len(validation_events) == 1
+        assert validation_events[0]["category"] == "trace"
+        assert validation_events[0]["content"]["resource_urls"] == 2
+        assert validation_events[0]["content"]["structurally_valid_signed"] == 1
+        assert validation_events[0]["content"]["malformed_signed"] == 1
+
+    @pytest.mark.anyio
+    async def test_on_llm_end_records_document_page_origin_validation(self):
+        store = MemoryRunEventStore()
+        j = RunJournal(
+            "r1",
+            "t1",
+            store,
+            flush_threshold=100,
+            expected_public_base_url="http://ocrdev.tentcoo.com",
+        )
+
+        j.on_llm_end(
+            _make_llm_response(f"[source]({DOCUMENT_URL})"),
+            run_id=uuid4(),
+            parent_run_id=None,
+            tags=["lead_agent"],
+        )
+        await j.flush()
+
+        events = await store.list_events("t1", "r1")
+        validation = next(event for event in events if event["event_type"] == "assistant.resource.validation")
+        assert validation["content"]["document_page_urls"] == 1
+        assert validation["content"]["document_origin_matches"] == 1
+        assert validation["content"]["document_pages_require_session"] == 1
+
+    @pytest.mark.anyio
+    async def test_on_llm_end_skips_resource_validation_for_non_final_or_subagent_messages(self, journal_setup):
+        j, store = journal_setup
+
+        j.on_llm_end(
+            _make_llm_response(
+                f"![pending]({TRUNCATED_SIGNED_URL})",
+                tool_calls=[{"id": "call_1", "name": "search", "args": {}}],
+            ),
+            run_id=uuid4(),
+            parent_run_id=None,
+            tags=["lead_agent"],
+        )
+        j.on_llm_end(
+            _make_llm_response(f"![subagent]({TRUNCATED_SIGNED_URL})"),
+            run_id=uuid4(),
+            parent_run_id=None,
+            tags=["subagent:research"],
+        )
+        await j.flush()
+
+        events = await store.list_events("t1", "r1")
+        assert not any(event["event_type"] == "assistant.resource.validation" for event in events)
 
     @pytest.mark.anyio
     async def test_token_accumulation(self, journal_setup):

@@ -1,6 +1,6 @@
 ---
 name: local-deep-research
-description: 当用户需要基于本地知识库回答一个具体问题、解释一个主题、分析某个概念/系统/文档集，或生成基于本地证据的普通研究回答时使用此 skill。优先使用 rag_search、rag_get_document、rag_get_document_preview、rag_get_document_chunks 和 rag_get_document_assets。若用户明确要求系统性文献综述、survey、annotated bibliography、多篇论文/报告的跨文档方法比较、纳入/排除筛选或证据矩阵，应改用 local-systematic-literature-review。
+description: 当用户需要基于本地知识库回答一个具体问题、解释一个主题、分析某个概念/系统/文档集，或生成基于本地证据的普通研究回答时使用此 skill。优先使用 rag_search、rag_get_document、rag_get_document_preview、rag_get_document_chunks 和 rag_get_document_assets。若用户要求深度研究报告、完整研究报告、基于全部/所有相关本地文档的报告、研究趋势、主题综合、系统性文献综述、survey、annotated bibliography、多篇论文/报告的跨文档方法比较、纳入/排除筛选或证据矩阵，应改用 local-systematic-literature-review。
 ---
 
 # 本地深度研究 Skill
@@ -9,7 +9,7 @@ description: 当用户需要基于本地知识库回答一个具体问题、解�
 
 当本地文档应作为主要事实来源时，此 skill 提供一套系统化方法，用于开展基于本地知识库的充分研究。**在开始普通本地深度研究回答或内容生成任务前，先加载此 skill**。
 
-如果用户明确要求系统性文献综述、survey、annotated bibliography、多篇论文/报告的跨文档方法比较、纳入/排除筛选或证据矩阵，应使用 `local-systematic-literature-review`，而不是此 skill。
+如果用户要求深度研究报告、完整研究报告、基于全部/所有相关本地文档的报告、研究趋势、主题综合、系统性文献综述、survey、annotated bibliography、多篇论文/报告的跨文档方法比较、纳入/排除筛选或证据矩阵，应使用 `local-systematic-literature-review`，而不是此 skill。
 
 它借鉴了深度网页研究的深度和多角度结构，但调整了证据优先级：
 
@@ -44,24 +44,73 @@ description: 当用户需要基于本地知识库回答一个具体问题、解�
 - 用户要求比较多篇本地论文、报告、标准或白皮书的方法、发现、局限。
 - 用户要求建立纳入/排除标准、候选文档矩阵、证据矩阵或跨文档主题综合。
 - 用户的目标是形成多文档综述报告，而不是回答一个具体研究问题。
+- 用户要求“深度研究报告”“完整研究报告”“基于本地全部文档/所有相关文档”“研究趋势报告”或“主题综合报告”，即使没有写出 SLR、literature review 或 survey。
 
 以上情况使用 `local-systematic-literature-review`。
 
 ## 核心原则
 
+### Skill 状态展示
+
+当你决定本轮采用此 skill 的完整或轻量本地研究流程时，在其它研究工具调用前先调用：
+
+```text
+report_active_skill(skill_name="local-deep-research")
+```
+
+该工具只记录本轮使用的 skill，供客户端在 `reasoning_content` 中显示；它不执行研究、不加载 skill，也不替代后续 RAG 工具调用。若只是普通直接回答且未采用此 skill，不要调用。
+
+### 轻量本地问答路径
+
+当用户只需要基于本地知识回答一个明确问题、解释一个主题或获得简要概述时，使用最短且充分的检索路径：
+
+1. 默认先调用一次 `rag_search(query="<topic>", mode="hybrid", limit=10)`。
+2. 如果命中的 chunks/assets 已足以支持可靠回答，直接综合并回答。
+3. 只有在检索片段缺少必要上下文、需要精确证据或涉及视觉细节时，才继续调用 `rag_get_document_preview`、`rag_get_document_chunks` 或视觉资产工具。
+4. 不要把 `rag_list_documents` 当作普通主题查询的固定前置步骤；它用于文档清单、范围发现或多文档综述候选池。
+5. 除非用户明确要求报告、文件或可下载交付物，否则直接在聊天正文中回答，不默认生成文件。
+
 ### 本地路径禁用规则
 
-本地知识库文档内容只能通过 `rag_*` 工具读取。允许使用的读取路径是：`rag_search`、`rag_list_documents`、`rag_get_document`、`rag_get_document_preview`、`rag_get_document_chunks`、`rag_get_document_assets` 和 `rag_list_collections`。
+本地知识库文档内容只能通过 `rag_*` 工具读取。允许使用的读取路径是：`rag_search`、`rag_list_documents`、`rag_get_document`、`rag_get_document_preview`、`rag_get_document_chunks`、`rag_get_document_assets`、`rag_get_document_asset` 和 `rag_list_collections`。
 
 禁止把 MMKB 返回的 `input_file_path`、`markdown_merged_path`、`markdown_image_dir_path`、`md_asset_base`、`image_abs` 或任何 `/home/.../storage/...`、`documents/.../markdown/...` 一类路径交给 `grep`、`read_file`、`bash`、`ls` 等文件/命令工具。那些路径是 MMKB 服务端元数据或 URL 线索，不是 DeerFlow sandbox 内可读文件。需要正文时用 `rag_get_document_preview` 或 `rag_get_document_chunks`；需要图片时用 `rag_get_document_assets` 或 `rag_search` 返回的 `image_url`。
 
-面向用户输出本地文档或图片链接时，只能逐字复制 `rag_*` 工具返回的
-`document_url`、`image_url` 等现成 URL。禁止根据 `document_id` 手写、
-拼接、重排或猜测 URL；工具未返回 URL 时，只展示标题与证据 ID。
+面向用户输出本地文档或图片链接时，优先使用 `rag_*` 工具返回的
+`document_url`、`image_url` 等现成 URL，并逐字保留这些 URL。工具未返回 URL 时，
+展示标题与证据 ID 作为来源追踪信息。
+
+### 子任务派发与汇总约束
+
+当你使用 `task` 派发本地研究子任务时，派发 prompt 应要求 subagent 返回结构化证据，而不是只给一段概述。至少包括：
+
+- `document_id`、标题或文件名、`document_url`；
+- 相关 chunk id、页码或其它文本证据位置；
+- 关键发现、证据强度和仍不确定的点；
+- 如涉及视觉证据，返回 `asset_id`、`page_id`、`block_id`、简短 OCR/caption 摘要，以及从 `rag_search`、`rag_get_document_assets` 或 `rag_get_document_asset` 逐字复制的完整 `image_url`。
+
+subagent 没有拿到可用 `image_url` 时，只返回视觉证据位置，不输出 Markdown 图片。派发 prompt 也应明确：不得根据 `document_id`、preview Markdown、`md_images/...`、`image_abs`、`/api/documents/.../media/...` 或服务端路径拼接图片 URL；需要展示来源文档时保留工具返回的 `document_url`。
+
+汇总 subagent 结果时，保留每篇/每个维度的核心结构和证据矩阵；用户要求深度报告时，不要把多个 subagent 的研究结果压缩成只剩几段摘要。最终报告中的图片只能使用工具结果或 subagent 结构化字段里已经逐字带回的 `image_url`；无法确认来源的图片链接应改为文字证据标注或省略。
+
+对会生成最终报告的本地深度研究，subagent 必须把完整结果写入共享工作区中间文件，推荐路径：
+
+```text
+research-notes/<task-slug>.md
+```
+
+派发 prompt 应明确要求 subagent：
+
+1. 使用 `write_file` 写入完整研究记录，而不是只在 task 返回里给摘要。
+2. 文件至少包含：任务范围、检索 query、涉及文档清单（含 `document_id`、标题和 `document_url`）、逐文档/逐维度发现、证据矩阵、视觉证据字段、关键缺口和低置信判断。
+3. 视觉证据只写工具返回的 `image_url`，没有 `image_url` 时只写 `asset_id`、页码、OCR/caption 摘要。
+4. task 返回中只报告中间文件路径、覆盖范围、主要发现和问题；完整内容以文件为准。
+
+主 agent 生成最终报告前，必须先用 `read_file` 读取所有 subagent 返回的中间文件，并以文件内容作为主要汇总输入。不要只依赖 `task` 返回摘要；如果某个中间文件缺失或不可读，要在最终报告的方法/局限性中说明该批次证据不完整。
 
 **当用户请求可以从本地知识库回答时，绝不要把通用知识或网页片段当作主要来源。**
 
-输出质量取决于本地检索的广度、文档阅读的深度，以及证据综合的清晰度。单次 `rag_search` 查询绝不足以支撑深度研究。
+输出质量取决于本地检索的广度、文档阅读的深度，以及证据综合的清晰度。对于明确要求深度研究的任务，单次 `rag_search` 通常不足；对于证据充分的轻量本地问答，可以直接综合并回答。
 
 网页工具只能作为有限补充使用，并且要把来自网页的信息标记为外部背景。
 
@@ -174,7 +223,9 @@ rag_search(query="<topic>", mode="hybrid", limit=10)
 - 用户问题涉及图片、图表、架构图、截图、扫描页、视觉布局或 OCR 内容。
 - `rag_search` 返回了有价值的图片资产，需要查看更多同文档视觉证据。
 - 文本证据提到了“如下图”“见图”“截图”“表格”“页面”等视觉线索。
-- 需要找到可展示的 `image_url`，或核对 `caption_or_ocr`。
+- 需要发现可展示的视觉资产及其 `asset_id`、`image_url` 或 OCR 摘要。
+
+`rag_get_document_assets` 返回的是分页紧凑资产目录，`caption_preview` 可能被截断；当 `has_more=true` 时按 `next_page` 继续浏览。选定需要深入分析或放入正文的资产后，必须调用 `rag_get_document_asset(document_id, asset_id)` 获取该资产的完整 `caption_or_ocr`、metadata 和签名 URL。面向用户输出图片时，只能逐字复制这次单资产详情调用返回的完整 URL。
 
 图片使用原则：
 
@@ -329,8 +380,15 @@ rag_search(query="<topic>", mode="hybrid", limit=10)
 在以下情况使用 `rag_get_document_assets`：
 - 问题涉及图、表、截图、扫描件、页面图片或视觉内容
 - 搜索结果里的 `assets` 对回答有帮助
-- 需要获取图片的 `image_url`、`caption_or_ocr`、页码或 block 信息
+- 需要浏览同一文档中的视觉资产目录、OCR 摘要、页码或 block 信息
 - 文档预览或 chunk 文本引用了图片，但需要查看实际图片 URL
+
+### 何时使用 rag_get_document_asset
+
+在以下情况使用 `rag_get_document_asset(document_id, asset_id)`：
+- 已从资产目录选中一张准备展示给用户的图片
+- 需要完整 OCR/caption 或 metadata，而不是目录中的截断摘要
+- 需要逐字复制一条完整签名 URL 到最终正文
 
 ## Subagent 指南
 
@@ -344,8 +402,17 @@ rag_search(query="<topic>", mode="hybrid", limit=10)
 每个 subagent 必须：
 1. 优先搜索本地知识库。
 2. 返回相关的 `document_id` 值。
-3. 总结关键证据和置信度。
-4. 将任何来自网页的信息标记为外部补充。
+3. 返回 chunk id、页码、asset id 或其它可追溯证据位置。
+4. 总结关键证据、证据强度和仍不确定的点。
+5. 如涉及视觉证据，返回 `asset_id`、`page_id`、`block_id`、OCR/caption 摘要和逐字复制的完整 `image_url`；没有 `image_url` 时只返回证据位置，不输出 Markdown 图片。
+6. 对最终报告相关任务，使用 `write_file` 将完整研究记录写入 `research-notes/<task-slug>.md` 或 `.json`，并在返回中给出该路径。
+7. 将任何来自网页的信息标记为外部补充。
+
+主 agent 在综合前必须读取这些中间文件：
+
+```text
+read_file("research-notes/<task-slug>.md")
+```
 
 不要为简单的单次查询查找使用 subagent。
 
@@ -380,16 +447,20 @@ rag_search(query="<topic>", mode="hybrid", limit=10)
 
 1. 简明的直接回答或执行摘要
 2. 按研究角度组织的关键发现
-3. 使用文档标题、文件名、`document_id`、chunk id、页码或 asset id 给出的本地证据引用
+3. 使用 `[文档标题](document_url)` 形式的本地证据引用，并在需要时补充 `document_id`、chunk id、页码或 asset id
 4. 如果使用过网页工具，给出外部补充上下文
 5. 不确定性、缺口或建议的后续搜索
+
+在正文中列出具体本地文档标题、论文名或资料名时，如果工具结果提供了 `document_url`，使用 `[文档标题](document_url)`；如果只是概括领域、类别或数量，可以不加链接。
+
+写入 Markdown 报告或最终文件前，检查所有图片链接：只保留从工具或 subagent 结构化字段逐字复制的 `image_url`。如果图片链接来自 preview Markdown、相对路径、服务端路径或无法确认来源，不要尝试修复，改为保留文字证据标注或重新调用 `rag_get_document_asset` 获取正确 URL。
 
 ### 推荐引用格式
 
 关键判断后使用简短来源标注，例如：
 
 ```text
-该系统通过线程运行接口进行流式交互。[本地证据：thread_runs 文档，document_id=..., chunk=42]
+该系统通过线程运行接口进行流式交互。[本地证据：thread_runs 文档](document_url)，document_id=..., chunk=42
 ```
 
 如果使用图片或 OCR 证据：

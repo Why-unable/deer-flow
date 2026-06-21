@@ -523,12 +523,14 @@ class TestAsyncExecutionPath:
             "mmkb_bearer_token": "Bearer workspace:key",
             "thread_id": "child-thread",
         }
-        assert captured["context"] == {
+        expected_context = {
             "public_base_url": "https://mmkb.example",
             "mmkb_workspace_id": "workspace",
             "mmkb_user_id": "user",
             "thread_id": "child-thread",
         }
+        assert captured["context"] == expected_context
+        assert captured["config"]["context"] == expected_context
         assert captured["stream_mode"] == "values"
 
     @pytest.mark.anyio

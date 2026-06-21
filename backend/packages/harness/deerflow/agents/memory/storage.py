@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from deerflow.agents.memory.artifact_sanitizer import sanitize_memory_artifact_references
 from deerflow.config.agents_config import AGENT_NAME_PATTERN
 from deerflow.config.memory_config import get_memory_config
 from deerflow.config.paths import get_paths
@@ -66,7 +67,7 @@ def normalize_memory(memory_data: Any) -> dict[str, Any]:
     if not isinstance(normalized.get("facts"), list):
         normalized["facts"] = []
 
-    return normalized
+    return sanitize_memory_artifact_references(normalized)
 
 
 class MemoryStorage(abc.ABC):
@@ -196,7 +197,7 @@ class FileMemoryStorage(MemoryStorage):
             # Shallow-copy before adding lastUpdated so the caller's dict is not
             # mutated as a side-effect, and the cache reference is not silently
             # updated before the file write succeeds.
-            memory_data = {**memory_data, "lastUpdated": utc_now_iso_z()}
+            memory_data = sanitize_memory_artifact_references({**memory_data, "lastUpdated": utc_now_iso_z()})
 
             temp_path = file_path.with_suffix(f".{uuid.uuid4().hex}.tmp")
             with open(temp_path, "w", encoding="utf-8") as f:

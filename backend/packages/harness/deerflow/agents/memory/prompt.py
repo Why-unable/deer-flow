@@ -4,6 +4,8 @@ import math
 import re
 from typing import Any
 
+from deerflow.agents.memory.artifact_sanitizer import sanitize_memory_artifact_references, sanitize_memory_artifact_text
+
 try:
     import tiktoken
 
@@ -127,6 +129,12 @@ Important Rules:
 - IMPORTANT: Do NOT record file upload events in memory. Uploaded files are
   session-specific and ephemeral — they will not be accessible in future sessions.
   Recording upload events causes confusion in subsequent conversations.
+- IMPORTANT: Do NOT record raw generated artifact paths or download links in
+  memory. Paths like `/mnt/user-data/outputs/...` and URLs like
+  `/api/agent/artifacts/...` or `/api/deerflow/artifacts/...` are
+  session/thread-scoped. If useful, remember only a non-clickable historical
+  note such as "a report named <filename> was generated previously"; do not
+  preserve a path or URL that could be reused in a future session.
 
 Return ONLY valid JSON, no explanation or markdown."""
 
@@ -210,6 +218,7 @@ def format_memory_for_injection(memory_data: dict[str, Any], max_tokens: int = 2
     """
     if not memory_data:
         return ""
+    memory_data = sanitize_memory_artifact_references(memory_data)
 
     sections = []
 
@@ -350,6 +359,7 @@ def format_conversation_for_update(messages: list[Any]) -> str:
             content = re.sub(r"<uploaded_files>[\s\S]*?</uploaded_files>\n*", "", str(content)).strip()
             if not content:
                 continue
+        content = sanitize_memory_artifact_text(str(content))
 
         # Truncate very long messages
         if len(str(content)) > 1000:

@@ -1,6 +1,6 @@
 ---
 name: local-systematic-literature-review
-description: 当用户要求基于本地知识库中的多篇论文、报告、标准或技术文档做系统性文献综述、survey、literature review、annotated bibliography、跨文档方法比较、主题综合或研究趋势分析时使用此 skill。它不访问 arXiv，而是使用 rag_list_documents、rag_search、rag_get_document、rag_get_document_preview、rag_get_document_chunks 和 rag_get_document_assets 对 MMKB 本地文档进行筛选、抽取和综合。单篇文档总结不要使用此 skill。
+description: 当用户要求基于本地知识库中的多篇论文、报告、标准或技术文档做深度研究报告、完整研究报告、全部/所有相关文档报告、系统性文献综述、survey、literature review、annotated bibliography、跨文档方法比较、主题综合或研究趋势分析时使用此 skill。它不访问 arXiv，而是使用 rag_list_documents、rag_search、rag_get_document、rag_get_document_preview、rag_get_document_chunks 和 rag_get_document_assets 对 MMKB 本地文档进行筛选、抽取和综合。单篇文档总结不要使用此 skill。
 ---
 
 # 本地系统性文献综述 Skill
@@ -24,16 +24,19 @@ description: 当用户要求基于本地知识库中的多篇论文、报告、�
 
 ## 何时使用
 
-当用户提出以下类型请求时使用此 skill：
+当用户目标是构建多文档候选集合、筛选来源、跨文档综合、生成完整本地研究报告，或使用系统综述方法时，使用此 skill。适用请求包括：
 
 - “基于本地知识库做一个文献综述”
+- “基于本地全部文档做一个深度研究报告”
+- “综合所有相关本地文档，生成完整研究报告”
 - “survey 本地这些论文/报告”
 - “比较本地知识库中几篇文档的方法”
-- “总结这些 NIST 文档/论文共同说明了什么”
+- “综合多篇本地 NIST 文档，并分析它们的共识、分歧和缺口”
 - “做一个 annotated bibliography”
 - “本地文档中关于 X 的研究趋势是什么”
 - “综合多个本地资料，写一个系统性综述”
 - “对本地知识库里的几篇论文做 SLR”
+- “围绕 X 做主题综合报告”
 
 不要在以下情况使用：
 
@@ -53,23 +56,53 @@ description: 当用户要求基于本地知识库中的多篇论文、报告、�
 
 - 需要本地知识库；
 - 涉及多篇文档；
-- 需要 survey / literature review / systematic review / annotated bibliography / 跨文档方法比较；
+- 需要完整报告、深度研究报告、全部/所有相关文档报告、研究趋势、主题综合、survey / literature review / systematic review / annotated bibliography / 跨文档方法比较；
 
 则优先使用此 skill。
 
 ## 本地路径禁用规则
 
-本地综述只能通过 `rag_*` 工具读取 MMKB 文档内容。允许使用的读取路径是：`rag_list_documents`、`rag_search`、`rag_get_document`、`rag_get_document_preview`、`rag_get_document_chunks`、`rag_get_document_assets` 和 `rag_list_collections`。
+本地综述只能通过 `rag_*` 工具读取 MMKB 文档内容。允许使用的读取路径是：`rag_list_documents`、`rag_search`、`rag_get_document`、`rag_get_document_preview`、`rag_get_document_chunks`、`rag_get_document_assets`、`rag_get_document_asset` 和 `rag_list_collections`。
 
 禁止把 MMKB 返回的 `input_file_path`、`markdown_merged_path`、`markdown_image_dir_path`、`md_asset_base`、`image_abs` 或任何 `/home/.../storage/...`、`documents/.../markdown/...` 一类路径交给 `grep`、`read_file`、`bash`、`ls` 等文件/命令工具。那些路径是 MMKB 服务端元数据或 URL 线索，不是 DeerFlow sandbox 内可读文件。需要正文时用 `rag_get_document_preview` 或 `rag_get_document_chunks`；需要图片时用 `rag_get_document_assets` 或 `rag_search` 返回的 `image_url`。
 
-面向用户输出本地文档或图片链接时，只能逐字复制 `rag_*` 工具返回的
-`document_url`、`image_url` 等现成 URL。禁止根据 `document_id` 手写、
-拼接、重排或猜测 URL；工具未返回 URL 时，只展示标题与证据 ID。
+面向用户输出本地文档或图片链接时，优先使用 `rag_*` 工具返回的
+`document_url`、`image_url` 等现成 URL，并逐字保留这些 URL。工具未返回 URL 时，
+展示标题与证据 ID 作为来源追踪信息。
+
+## 子任务派发与汇总约束
+
+使用 `task` 批量抽取时，subagent 返回值必须服务于后续综述矩阵，而不是只给自然语言概述。派发 prompt 应要求每篇文档返回统一字段、文本证据位置和视觉证据字段。
+
+视觉证据字段包括 `asset_id`、`page_id`、`block_id`、简短 OCR/caption 摘要，以及从 `rag_search`、`rag_get_document_assets` 或 `rag_get_document_asset` 逐字复制的完整 `image_url`。每篇文档的来源字段同时保留 `document_id`、标题和 `document_url`。没有可用 `image_url` 时，只返回 `asset_id`、页码和 OCR/caption 摘要，不输出 Markdown 图片。
+
+派发 prompt 应明确禁止根据 `document_id`、preview Markdown、`md_images/...`、`image_abs`、`/api/documents/.../media/...` 或服务端路径拼接图片 URL；来源文档字段使用工具返回的 `document_url`。
+
+汇总阶段必须保留每篇纳入文档的抽取结构、证据矩阵和关键图表字段。用户要求完整综述或深度研究报告时，不要把 subagent 的逐篇结果压缩成只剩 executive summary；跨文档主题综合应建立在保留下来的逐篇证据之上。
+
+对使用 subagent 的综述，必须采用中间文件协议：
+
+```text
+research-notes/slr-batch-<n>.json
+```
+
+每个 subagent 必须把该批次的完整抽取结果写入中间文件，并在 task 返回中报告文件路径、覆盖文档数量、失败文档和简短摘要。主 agent 在进入跨文档综合前，必须用 `read_file` 读取所有 batch 文件，以文件内容作为证据矩阵和最终报告的主要输入；不要只依赖 task 返回摘要。
+
+如果某个 batch 文件缺失、不可读或不是预期结构，记录该批次为不完整证据，不要把摘要扩写成完整抽取结果。
 
 ## 工作流
 
 严格按以下阶段执行。
+
+### 阶段 0：Skill 状态展示
+
+当你决定本轮采用此 skill 时，在其它研究工具调用前先调用：
+
+```text
+report_active_skill(skill_name="local-systematic-literature-review")
+```
+
+该工具只记录本轮使用的 skill，供客户端在 `reasoning_content` 中显示；它不执行研究、不加载 skill，也不替代后续检索、筛选和报告生成流程。
 
 ### 阶段 1：确认范围
 
@@ -92,6 +125,20 @@ description: 当用户要求基于本地知识库中的多篇论文、报告、�
 ```
 
 如果用户给出的范围过大，例如“综述全部文档”或“50 篇以上”，应说明本地综述质量会随文档数量下降，建议先按主题或 collection 拆分。
+
+### 阶段 1.5：研究计划产物
+
+进入候选发现前，先形成一份内部 `research_plan`，后续检索、筛选、抽取和报告都围绕它执行。计划至少包含：
+
+- 研究主题和用户问题；
+- 文档范围、默认纳入上限和任何 collection/type 限制；
+- 2-5 个检索 query 或 query 变体；
+- 纳入/排除标准；
+- 是否需要 subagent，以及批次策略；
+- 预期最终报告结构；
+- 可能需要检查的视觉证据类型。
+
+如果任务会生成完整报告，最终报告的 Methodology 部分应概述这份计划，而不是只展示最终结论。
 
 ### 阶段 2：发现候选文档
 
@@ -157,13 +204,20 @@ rag_get_document_preview(document_id, max_chars=12000)
 ```text
 rag_get_document_chunks(document_id)
 rag_get_document_assets(document_id)
+rag_get_document_asset(document_id, asset_id)
 ```
+
+`rag_get_document_assets` 仅用于浏览分页紧凑资产目录；`has_more=true` 时按
+`next_page` 继续浏览。若要使用某项资产的完整 OCR、
+metadata 或在最终正文中展示其图片，必须再调用 `rag_get_document_asset`，并逐字
+复制单资产详情返回的完整签名 URL。
 
 筛选输出应在内部形成一张矩阵：
 
 | 字段 | 含义 |
 |---|---|
 | `document_id` | MMKB 文档 ID |
+| `document_url` | 工具返回的 MMKB 文档页面链接 |
 | 标题/文件名 | 人类可读来源名 |
 | 文档类型 | 论文、标准、指南、报告、白皮书等 |
 | 匹配查询 | 哪些 query 找到它 |
@@ -182,6 +236,7 @@ rag_get_document_assets(document_id)
 ```json
 {
   "document_id": "...",
+  "document_url": "...",
   "title": "...",
   "source_ext": "pdf",
   "document_type": "paper | standard | guide | report | whitepaper | unknown",
@@ -206,13 +261,13 @@ rag_get_document_assets(document_id)
 证据要求：
 
 - 每篇文档至少保留 1-3 条关键本地证据。
-- 证据应尽量包含 `document_id`、chunk id、页码或 asset id。
+- 证据应尽量包含 `document_url`、`document_id`、chunk id、页码或 asset id。
 - 不要复制大段原文；使用简短摘录或转述。
 - 如果判断来自 OCR/caption，要明确标记为视觉/OCR 证据。
 
 #### 是否使用 subagent
 
-如果 `task` 工具可用，且纳入文档超过 5 篇，建议使用 subagent 批量抽取。
+如果 `task` 工具可用，且纳入文档超过 5 篇，必须优先使用 subagent 批量抽取；如果 subagent 不可用或某批次失败，主 agent 必须直接完成受影响文档的逐篇抽取，或者在报告中明确降级为初步分析并列出缺失批次。
 
 批次策略：
 
@@ -230,9 +285,12 @@ subagent prompt 应包含：
 ```text
 请基于以下 MMKB 本地文档材料抽取结构化综述元数据。
 只使用给定材料，不要搜索外部网页，不要编造来源。
+将完整 JSON array 写入 research-notes/slr-batch-<n>.json。
+task 返回中只报告：中间文件路径、覆盖文档数量、失败文档、3-5 条摘要。完整抽取结果以文件为准。
 
 对每篇文档返回 JSON 对象：
 - document_id
+- document_url
 - title
 - document_type
 - main_topic
@@ -241,10 +299,14 @@ subagent prompt 应包含：
 - key_findings
 - recommendations_or_implications
 - limitations_or_scope
-- evidence: [{chunk_id, page, quote_or_summary, asset_id, image_url}]
+- evidence: [{chunk_id, page, quote_or_summary, asset_id, page_id, block_id, caption_or_ocr_summary, image_url}]
+
+如涉及视觉证据，image_url 使用工具返回或 subagent 已逐字带回的 image_url；来源文档链接使用工具返回的 document_url。
 
 只返回 JSON array，不要输出 markdown fence 或解释性前言。
 ```
+
+派发 prompt 中的“只返回 JSON array”指写入中间文件的内容；task 返回可以是简短状态说明，但必须包含中间文件路径。
 
 如果 subagent 返回不可解析内容，应记录受影响文档，并继续处理其它批次。不要因为一个批次失败就编造结果。
 
@@ -262,20 +324,54 @@ subagent prompt 应包含：
 
 如果文档集合太小或异质性太高，无法形成可靠主题，应明确说明，不要强行编造主题。
 
-### 阶段 6：引用和报告格式
+生成最终 Markdown 或文件前，检查所有图片链接和本地资源链接。MMKB 图片只保留逐字复制的 `image_url`；无法确认来自工具结果或 subagent 结构化字段的链接，改为文字证据标注或省略。不要根据路径形态自行修复链接，需要图片时重新调用 `rag_get_document_asset`。
 
-默认使用本地证据引用，不使用 arXiv APA/IEEE/BibTeX 规则。
+跨文档综合前，必须读取所有 `research-notes/slr-batch-*.json` 中间文件，并把读取到的逐篇抽取结果合并为证据矩阵。最终报告的方法部分应说明使用了多少个 batch 文件，以及是否存在缺失或不可读的 batch。
+
+### 阶段 6：质量门槛和自检修订
+
+生成最终报告前，必须执行一次质量自检。检查项包括：
+
+- 是否有 `research_plan`，且报告 Methodology 能反映计划；
+- 是否形成候选文档清单和纳入/排除记录；
+- 是否对每篇纳入文档完成统一字段抽取；
+- 如果使用 subagent，是否已读取所有中间文件，而不是只依赖 task 返回摘要；
+- 是否有 evidence matrix，且关键结论能回到文档、chunk、页码或 asset；
+- 是否检查并清理了不合规图片/资源链接；
+- 报告是否满足长度和密度要求。
+
+若任一关键项缺失，不要把结果命名或描述为“完整深度研究报告”。应修订补齐；确实无法补齐时，在标题、Executive Summary 或 Methodology 中明确标记为“初步分析”，并列出缺失原因。
+
+### 阶段 7：长度和密度预算
+
+完整本地综述或深度研究报告应有足够展开度，除非可用证据不足：
+
+- Executive Summary：3-5 句，只综合不逐篇罗列；
+- Methodology：说明检索 query、候选数量、纳入/排除标准和批次/中间文件情况；
+- Included Documents：每篇纳入文档至少有一行纳入原因；
+- Themes：3-6 个主题，每个主题至少包含 2 条本地证据或说明为何证据不足；
+- Convergences / Disagreements / Gaps：分别给出可追溯证据或明确缺口；
+- Evidence Matrix：每篇纳入文档至少一行，包含关键发现、方法/框架、局限和证据位置；
+- Visual Evidence：如使用图片或 OCR/caption，列出 `document_id`、`asset_id`、页码、摘要和逐字复制的 `image_url`；没有可用 `image_url` 时只保留文字证据位置。
+
+当纳入文档不少于 3 篇时，完整报告通常不应只有几段摘要。若最终内容明显偏短，先补充逐文档抽取、主题证据和矩阵，再保存报告。
+
+### 阶段 8：引用和报告格式
+
+默认使用本地证据引用，不使用 arXiv APA/IEEE/BibTeX 规则。本地证据引用优先写成可点击 Markdown 链接，并在链接后保留必要的追踪字段。
+
+在正文中列出具体本地文档标题、论文名或资料名时，如果工具结果提供了 `document_url`，使用 `[文档标题](document_url)`；如果只是概括领域、类别或数量，可以不加链接。
 
 推荐引用格式：
 
 ```text
-[本地证据：<title>, document_id=<id>, chunk=<chunk_id>, page=<page>]
+[本地证据：<title>](<document_url>)；document_id=<id>；chunk=<chunk_id>；page=<page>
 ```
 
 如涉及视觉证据：
 
 ```text
-[视觉证据：<title>, document_id=<id>, asset=<asset_id>, page=<page>]
+[视觉证据：<title>](<document_url>)；document_id=<id>；asset=<asset_id>；page=<page>
 ```
 
 如果文档 metadata 足够完整，且用户明确要求 APA/IEEE/BibTeX，可以在报告末尾附加“近似参考格式”。但必须说明：
@@ -286,7 +382,7 @@ subagent prompt 应包含：
 
 不要把没有作者/年份/出版源的本地文件伪装成正式论文引用。
 
-### 阶段 7：保存和展示
+### 阶段 9：保存和展示
 
 完整报告保存到：
 
@@ -383,11 +479,27 @@ subagent prompt 应包含：
 |---|---|---|---|---|
 | ... | ... | ... | ... | ... |
 
+## Visual Evidence
+
+| 文档 | asset/page | OCR/caption 摘要 | image_url 或证据位置 |
+|---|---|---|---|
+| ... | ... | ... | ... |
+
+## Quality Check
+
+- research_plan：<已完成/缺失>
+- 候选与筛选记录：<已完成/缺失>
+- 中间文件读取：<N 个 batch，或说明未使用 subagent>
+- evidence matrix：<已完成/缺失>
+- 图片/资源链接检查：<已完成/无图片/已移除不合规链接>
+- 报告完整性：<完整报告/初步分析，并说明原因>
+
 ## Per-Document Annotations
 
 ### <文档标题>
 
 - `document_id`: <id>
+- 来源链接：[<文档标题>](<document_url>)
 - 类型：<type>
 - 主题：<main_topic>
 - 目的/问题：<purpose_or_research_question>
@@ -397,11 +509,11 @@ subagent prompt 应包含：
 - 局限/范围：
   - ...
 - 本地证据：
-  - [本地证据：..., chunk=..., page=...]
+  - [本地证据：<文档标题>](<document_url>)；chunk=...；page=...
 
 ## References / Local Sources
 
-- <title> (`document_id=<id>`)
+- [<title>](<document_url>) (`document_id=<id>`)
 ```
 
 ## 常见失败模式

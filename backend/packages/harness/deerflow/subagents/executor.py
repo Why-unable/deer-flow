@@ -505,6 +505,11 @@ class SubagentExecutor:
                 run_config["configurable"] = configurable
             if self.app_config is not None:
                 context["app_config"] = self.app_config
+            if context:
+                # Tool functions receive RunnableConfig, not the LangGraph
+                # runtime context argument. Mirror the approved context there
+                # so delegated rag_* calls keep request-scoped MMKB settings.
+                run_config["context"] = context
 
             logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} starting async execution with max_turns={self.config.max_turns}")
 

@@ -71,13 +71,16 @@ src/
 
 ### Technology Stack
 
-- **LangGraph SDK** (`@langchain/langgraph-sdk@1.5.3`) - Agent orchestration and streaming
-- **LangChain Core** (`@langchain/core@1.1.15`) - Fundamental AI building blocks
-- **TanStack Query** (`@tanstack/react-query@5.90.17`) - Server state management
+- **LangGraph SDK** - Agent orchestration and streaming
+- **LangChain Core** - Fundamental AI building blocks
+- **TanStack Query** - Server state management
 - **React Hooks** - Thread lifecycle and state management
 - **Shadcn UI** - UI components
 - **MagicUI** - Magic UI components
 - **React Bits** - React bits components
+
+Use `package.json` for declared dependency ranges and `pnpm-lock.yaml` for the
+currently resolved versions. Do not copy dependency versions into this guide.
 
 ### Interaction Ownership
 

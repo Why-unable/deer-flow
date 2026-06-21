@@ -101,6 +101,17 @@ def _install_runtime_context(config: dict, runtime_context: dict[str, Any]) -> N
     config["context"] = dict(runtime_context)
 
 
+def _resolve_expected_public_base_url(config: dict[str, Any]) -> str:
+    """Resolve the caller-visible MMKB origin without exposing bearer context."""
+    configurable = config.get("configurable")
+    context = config.get("context")
+    if not isinstance(configurable, dict):
+        configurable = {}
+    if not isinstance(context, dict):
+        context = {}
+    return str(configurable.get("public_base_url") or context.get("public_base_url") or "").strip().rstrip("/")
+
+
 def _compute_agent_factory_supports_app_config(agent_factory: Any) -> bool:
     try:
         return "app_config" in inspect.signature(agent_factory).parameters
@@ -177,6 +188,7 @@ async def run_agent(
                 event_store=event_store,
                 track_token_usage=getattr(run_events_config, "track_token_usage", True),
                 progress_reporter=lambda snapshot: run_manager.update_run_progress(run_id, **snapshot),
+                expected_public_base_url=_resolve_expected_public_base_url(config),
             )
 
         # 1. Mark running

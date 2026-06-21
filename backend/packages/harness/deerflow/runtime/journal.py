@@ -29,6 +29,8 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, AnyMessage, BaseMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
 
+from deerflow.utils.mmkb_resource_validation import log_mmkb_resource_validation, validate_mmkb_resource_urls
+
 if TYPE_CHECKING:
     from deerflow.runtime.events.store.base import RunEventStore
 
@@ -48,6 +50,7 @@ class RunJournal(BaseCallbackHandler):
         flush_threshold: int = 20,
         progress_reporter: Callable[[dict], Awaitable[None]] | None = None,
         progress_flush_interval: float = 5.0,
+        expected_public_base_url: str = "",
     ):
         super().__init__()
         self.run_id = run_id
@@ -57,6 +60,7 @@ class RunJournal(BaseCallbackHandler):
         self._flush_threshold = flush_threshold
         self._progress_reporter = progress_reporter
         self._progress_flush_interval = progress_flush_interval
+        self._expected_public_base_url = expected_public_base_url
 
         # Write buffer
         self._buffer: list[dict] = []
@@ -291,6 +295,7 @@ class RunJournal(BaseCallbackHandler):
                     "llm_call_index": call_index,
                 },
             )
+            self._record_assistant_resource_validation(message, caller=caller, langchain_run_id=rid)
             if rid not in self._counted_message_llm_run_ids:
                 self._record_message_summary(message, caller=caller)
 
@@ -320,6 +325,40 @@ class RunJournal(BaseCallbackHandler):
 
         if messages:
             self._counted_message_llm_run_ids.add(str(run_id))
+
+    def _record_assistant_resource_validation(
+        self,
+        message: BaseMessage,
+        *,
+        caller: str,
+        langchain_run_id: str,
+    ) -> None:
+        """Validate user-facing lead-agent MMKB resource links without changing content."""
+
+        if caller != "lead_agent" or getattr(message, "tool_calls", None):
+            return
+        text = self._message_text(message)
+        if not text:
+            return
+        stats = validate_mmkb_resource_urls(text, expected_base_url=self._expected_public_base_url)
+        if stats.resource_urls == 0:
+            return
+
+        log_mmkb_resource_validation(
+            "assistant_resource_validation",
+            stats,
+            thread_id=self.thread_id,
+            run_id=self.run_id,
+        )
+        self._put(
+            event_type="assistant.resource.validation",
+            category="trace",
+            content=stats.to_dict(),
+            metadata={
+                "caller": caller,
+                "langchain_run_id": langchain_run_id,
+            },
+        )
 
     def on_llm_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
         self._llm_start_times.pop(str(run_id), None)

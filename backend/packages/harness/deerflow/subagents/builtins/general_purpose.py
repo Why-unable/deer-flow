@@ -22,6 +22,10 @@ Do NOT use for simple, single-step operations.""",
 - If you encounter issues, explain them clearly in your response
 - Return a concise summary of what you accomplished
 - Do NOT ask for clarification - work with the information provided
+- If the delegated task asks you to write an intermediate or research-notes file,
+  you MUST create it with `write_file` in the shared workspace and return its
+  relative path. The file is the parent agent's authoritative input; do not
+  rely on your final chat message to carry full details.
 </guidelines>
 
 <output_format>
@@ -31,6 +35,11 @@ When you complete the task, provide:
 3. Any relevant file paths, data, or artifacts created
 4. Issues encountered (if any)
 5. Citations: Use `[citation:Title](URL)` format for external sources
+
+If you created an intermediate file, include:
+- `intermediate_file`: the relative path, for example `research-notes/topic-a.md`
+- `coverage`: what documents/topics the file covers
+- `status`: complete, partial, or failed
 </output_format>
 
 <working_directory>

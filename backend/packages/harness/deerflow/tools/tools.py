@@ -6,13 +6,14 @@ from deerflow.config import get_app_config
 from deerflow.config.app_config import AppConfig
 from deerflow.reflection import resolve_variable
 from deerflow.sandbox.security import is_host_bash_allowed
-from deerflow.tools.builtins import ask_clarification_tool, present_file_tool, task_tool, view_image_tool
+from deerflow.tools.builtins import ask_clarification_tool, present_file_tool, report_active_skill_tool, task_tool, view_image_tool
 from deerflow.tools.builtins.tool_search import get_deferred_registry
 from deerflow.tools.sync import make_sync_tool_wrapper
 
 logger = logging.getLogger(__name__)
 
 BUILTIN_TOOLS = [
+    report_active_skill_tool,
     present_file_tool,
     ask_clarification_tool,
 ]

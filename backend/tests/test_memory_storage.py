@@ -157,6 +157,42 @@ class TestFileMemoryStorage:
                 assert result is True
                 assert memory_file.exists()
 
+    def test_save_sanitizes_thread_scoped_artifact_paths(self, tmp_path):
+        """Stored memory must not retain paths that can be re-signed in another thread."""
+        memory_file = tmp_path / "memory.json"
+
+        def mock_get_paths():
+            mock_paths = MagicMock()
+            mock_paths.memory_file = memory_file
+            return mock_paths
+
+        with patch("deerflow.agents.memory.storage.get_paths", side_effect=mock_get_paths):
+            with patch("deerflow.agents.memory.storage.get_memory_config", return_value=MemoryConfig(storage_path="")):
+                storage = FileMemoryStorage()
+                result = storage.save(
+                    {
+                        "version": "1.0",
+                        "user": {
+                            "topOfMind": {
+                                "summary": "Report saved at /mnt/user-data/outputs/lithium-battery-research-report.md."
+                            }
+                        },
+                        "facts": [
+                            {
+                                "content": "Download: https://mmkb.example/api/agent/artifacts/signed-token",
+                                "category": "context",
+                            }
+                        ],
+                    }
+                )
+
+        assert result is True
+        saved = memory_file.read_text(encoding="utf-8")
+        assert "/mnt/user-data/outputs/" not in saved
+        assert "/api/agent/artifacts/" not in saved
+        assert "历史生成文件：lithium-battery-research-report.md" in saved
+        assert "历史生成文件下载链接已省略" in saved
+
     def test_save_does_not_mutate_caller_dict(self, tmp_path):
         """save() must not mutate the caller's dict (lastUpdated side-effect)."""
         memory_file = tmp_path / "memory.json"
