@@ -70,6 +70,14 @@ description: 当用户要求基于本地知识库中的多篇论文、报告、�
 `document_url`、`image_url` 等现成 URL，并逐字保留这些 URL。工具未返回 URL 时，
 展示标题与证据 ID 作为来源追踪信息。
 
+如果 `rag_get_document_preview` 返回 `truncated=true`，该结果只代表文档部分预览。
+对于纳入/排除判断、统一字段抽取、方法/结果/局限总结或最终报告中的强结论，
+应优先使用 `rag_get_document_chunks` 或进行更有针对性的 `rag_search` 覆盖后续
+章节。只有当前预览不足以建立文档概览，例如目录、章节结构或开头背景不完整时，
+才通过提高 `max_chars`，或使用上一轮返回的 `end_char` 作为 `start_char`
+继续读取下一段 preview 来补足概览。只有在报告中明确标注为初步分析
+时，才可把截断 preview 作为主要依据。
+
 ## 子任务派发与汇总约束
 
 使用 `task` 批量抽取时，subagent 返回值必须服务于后续综述矩阵，而不是只给自然语言概述。派发 prompt 应要求每篇文档返回统一字段、文本证据位置和视觉证据字段。
@@ -196,7 +204,7 @@ report_active_skill(skill_name="local-systematic-literature-review")
 
 ```text
 rag_get_document(document_id)
-rag_get_document_preview(document_id, max_chars=12000)
+rag_get_document_preview(document_id, max_chars=12000, start_char=0)
 ```
 
 必要时使用：
@@ -211,6 +219,13 @@ rag_get_document_asset(document_id, asset_id)
 `next_page` 继续浏览。若要使用某项资产的完整 OCR、
 metadata 或在最终正文中展示其图片，必须再调用 `rag_get_document_asset`，并逐字
 复制单资产详情返回的完整签名 URL。
+
+若 `rag_get_document_preview` 返回 `truncated=true`，候选筛选阶段可以先用它判断
+相关性，但纳入文档进入统一字段抽取或最终证据矩阵前，应补充
+`rag_get_document_chunks` 或用针对性查询覆盖关键后续章节；只有概览信息不足时，
+才提高 `max_chars`，或用上一轮返回的 `end_char` 作为 `start_char`
+继续读取下一段 preview。不要把仅基于部分 preview 的判断描述成已
+覆盖全文。
 
 筛选输出应在内部形成一张矩阵：
 
@@ -264,6 +279,7 @@ metadata 或在最终正文中展示其图片，必须再调用 `rag_get_documen
 - 证据应尽量包含 `document_url`、`document_id`、chunk id、页码或 asset id。
 - 不要复制大段原文；使用简短摘录或转述。
 - 如果判断来自 OCR/caption，要明确标记为视觉/OCR 证据。
+- 如果 preview 曾返回 `truncated=true`，记录后续补读方式；未补读时把该文档标记为证据覆盖不足，不作为全文级强结论的唯一依据。
 
 #### 是否使用 subagent
 
@@ -336,6 +352,7 @@ task 返回中只报告：中间文件路径、覆盖文档数量、失败文档
 - 是否形成候选文档清单和纳入/排除记录；
 - 是否对每篇纳入文档完成统一字段抽取；
 - 如果使用 subagent，是否已读取所有中间文件，而不是只依赖 task 返回摘要；
+- 是否处理了所有 `truncated=true` 的 preview，并对纳入文档补读 chunks、做针对性检索，或标注证据覆盖不足；
 - 是否有 evidence matrix，且关键结论能回到文档、chunk、页码或 asset；
 - 是否检查并清理了不合规图片/资源链接；
 - 报告是否满足长度和密度要求。

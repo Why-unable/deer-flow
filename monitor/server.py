@@ -26,7 +26,9 @@ resource_events: deque[dict] = deque(maxlen=200)
 resource_event_keys: deque[str] = deque(maxlen=500)
 last_log_poll: dict[str, int] = {}
 log_file_positions: dict[str, int] = {}
-RESOURCE_EVENT_RE = re.compile(r"\b(mmkb_tool_resource_validation|assistant_resource_validation)\b")
+RESOURCE_EVENT_RE = re.compile(
+    r"\b(mmkb_runtime_context|deerflow_run_context_merge|mmkb_tool_resource_validation|assistant_resource_validation)\b"
+)
 RESOURCE_FIELD_RE = re.compile(r"\b([a-z_]+)=([^\s]+)")
 LOG_TIMESTAMP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?))")
 RESOURCE_FIELDS = {
@@ -45,6 +47,21 @@ RESOURCE_FIELDS = {
     "unexpected_document_origins",
     "relative_document_pages",
     "document_pages_require_session",
+    "api_document_detail_urls",
+    "base_url",
+    "public_base_url",
+    "public_base_url_source",
+    "public_base_url_fallback_used",
+    "fallback_used",
+    "bearer_present",
+    "configurable_public_base_url_present",
+    "context_public_base_url_present",
+    "incoming_public_base_url_present",
+    "incoming_public_base_url",
+    "configurable_public_base_url",
+    "context_public_base_url",
+    "mmkb_workspace_present",
+    "mmkb_user_present",
 }
 
 
@@ -95,20 +112,31 @@ def append_resource_validation_event(line: str, source: str) -> None:
     resource_event_keys.append(event_key)
     fields = {key: value for key, value in RESOURCE_FIELD_RE.findall(line) if key in RESOURCE_FIELDS}
     timestamp_match = LOG_TIMESTAMP_RE.match(line)
+    event_name = event_match.group(1)
+    has_failures = any(
+        int(fields.get(key, "0")) > 0
+        for key in (
+            "malformed_signed",
+            "protected_unsigned",
+            "malformed_document_pages",
+            "unexpected_document_origins",
+            "api_document_detail_urls",
+        )
+    )
+    if event_name == "mmkb_runtime_context" and fields.get("fallback_used") == "true":
+        has_failures = True
+    if (
+        event_name == "deerflow_run_context_merge"
+        and fields.get("mmkb_workspace_present") == "true"
+        and fields.get("incoming_public_base_url_present") != "true"
+    ):
+        has_failures = True
     resource_events.appendleft(
         {
             "timestamp": timestamp_match.group(1) if timestamp_match else "",
             "container": source,
-            "event": event_match.group(1),
-            "has_failures": any(
-                int(fields.get(key, "0")) > 0
-                for key in (
-                    "malformed_signed",
-                    "protected_unsigned",
-                    "malformed_document_pages",
-                    "unexpected_document_origins",
-                )
-            ),
+            "event": event_name,
+            "has_failures": has_failures,
             "fields": fields,
         }
     )

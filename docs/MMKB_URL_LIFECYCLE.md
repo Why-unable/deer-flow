@@ -29,14 +29,36 @@ MMKB 自身的 `rag` mode 不经过阶段 2 和阶段 4，而是在最终回答 
     *   **第 1600 行**：在 `openai_chat_completions` 等视图函数中，调用 `request.build_absolute_uri("/")` 获取来源前端的真实 Host。
 *   文件：`mmkb/app/services/chat_completion.py`
     *   **第 323 行**：大模型聊天补全服务的代理层，将获取到的 `public_base_url` 塞入发送给 DeerFlow 的上下文 (`context["public_base_url"]`) 中。
+    *   发送 DeerFlow run 前会输出 `mmkb_deerflow_agent_payload` 日志，记录
+        `public_base_url`、payload 中的 `payload_public_base_url`、thread 是否复用、
+        workspace/user 是否存在，以及 bearer 是否存在；日志不会记录 bearer token 内容。
+
+DeerFlow Gateway 收到请求并合并上下文后，会输出
+`deerflow_run_context_merge` 日志。该日志用于判断 `context.public_base_url`
+是否真的从 MMKB 进入了 DeerFlow 的 `configurable/context`：
+
+```text
+deerflow_run_context_merge thread_id=<thread> incoming_public_base_url_present=true incoming_public_base_url=https://<public-origin>/ configurable_public_base_url=https://<public-origin>/ context_public_base_url=https://<public-origin>/ mmkb_workspace_present=true mmkb_user_present=true
+```
+
+如果 `mmkb_workspace_present=true` 但
+`incoming_public_base_url_present=false`，说明 MMKB 代理请求没有把公开源站传入
+DeerFlow，后续 RAG 工具很可能回退到内部 `base_url`。
 
 ## 阶段 2：Agent 发起检索与请求头注水 (发起)
 此阶段是 Agent 实际使用 RAG 工具发起请求时，将捕获到的 Base URL 放入请求头发送回 MMKB。
 
 *   文件：`deer-flow/backend/packages/harness/deerflow/tools/custom/rag/context.py`
     *   `resolve_mmkb_runtime_context` 从运行时 `configurable/context` 中提取
-        `mmkb_bearer_token` 和 `public_base_url`，并与工具静态 `base_url/timeout`
-        合并为请求上下文。
+        `mmkb_bearer_token` 和 `public_base_url`，并与工具静态
+        `base_url/timeout/public_base_url_fallback` 合并为请求上下文。
+    *   每次 RAG 工具构造运行上下文时会输出 `mmkb_runtime_context` 日志，记录
+        `public_base_url_source=configurable|context|fallback_public_base_url|fallback_base_url` 和
+        `fallback_used=true|false`。如果 `fallback_used=true`，表示工具没有拿到
+        请求级公开地址。此时优先使用工具静态配置中的
+        `public_base_url_fallback` 作为用户可见链接的保险丝；只有没有配置该
+        保险丝时，才会退回 Docker 内部 `base_url`，用户正文中才可能出现
+        `host.docker.internal`。
 *   文件：`deer-flow/backend/packages/harness/deerflow/tools/custom/rag/client.py`
     *   `HTTPMMKBClient` 把 `search`、`get_document_assets` 等语义操作映射为 MMKB
         HTTP endpoint，并发送 `Authorization` 与 `X-MMKB-Public-Base-URL`。
@@ -64,25 +86,46 @@ DeerFlow 收到 MMKB 响应后，将仍需呈现给用户的相对地址补全�
 *   文件：`deer-flow/backend/packages/harness/deerflow/tools/custom/rag/mmkb_links.py`
     *   `process_mmkb_response_links` 统一处理 JSON 响应链接。
     *   只要发现字段名以 `_url`、`_path`、`_base` 结尾且值以 `/` 开头，就会将其与传入的 Base URL 拼接。
+    *   `document_url` 表示浏览器可打开的文档详情页，规范路径是
+        `/documents/<document_id>`。如果上游或模型中间结果误把
+        `/api/documents/<document_id>` 写入 `document_url`，该阶段会归一为
+        `/documents/<document_id>`；`/api/documents/<document_id>` 只是 API 详情
+        endpoint，访问后返回 JSON，不应作为用户正文引用链接。
+    *   如果 `document_url` 已经是 `http://host.docker.internal:8000/documents/...`
+        这类 Docker 内部绝对地址，而本轮运行存在 `public_base_url`，该阶段会将
+        文档页源站归一到本轮公开源站，避免内部地址进入中间文件或最终报告。
     *   该阶段负责地址格式转换，不负责签名，也不能把漏签媒体变成匿名可访问媒体。
     *   `log_mmkb_link_processing` 每次工具调用输出一条不包含 URL 内容的聚合日志。
 *   文件：`deer-flow/backend/packages/harness/deerflow/tools/custom/rag/service.py`
     *   `MMKBService` 在任意 transport 返回数据后统一调用上述处理与日志逻辑。
+    *   `rag_get_document` 调用 MMKB API 详情 endpoint 后，会在返回给模型前补充
+        规范 `document_url=/documents/<document_id>`，避免模型从 API endpoint 自行
+        拼接用户可见文档链接。
+    *   `rag_get_document_preview`、`rag_get_document_chunks`、
+        `rag_get_document_assets` 这类文档作用域工具也会补充同一规范
+        `document_url`，避免 subagent 只拿到 `document_id` 后自行拼接文档页。
 *   文件：`deer-flow/backend/packages/harness/deerflow/utils/mmkb_resource_validation.py`
     *   对工具响应中的 `/api/document-media/<token>` 执行结构校验，检查 payload、
         timestamp、signature 三段是否齐全以及 Base64/字符格式是否合法。
     *   同时统计仍然受保护的 `/api/documents/<id>/media/...` 地址。
+        结构化工具结果中的 `md_asset_base` 是 API 元数据基路径，不作为未签名媒体
+        URL 计数；如果模型最终正文直接输出具体 `/api/documents/.../media/...`
+        链接，正文层校验仍会计为异常。
     *   同时统计普通 `/documents/<uuid>` 文档页，检查 UUID 路径和源站是否与本次
         run 的 `public_base_url` 一致。文档页仍需浏览器登录和匹配的当前 workspace；
         `document_pages_require_session` 是提示性指标，不计为失败。
+    *   同时统计误用的 `/api/documents/<uuid>` API 详情地址：
+        `api_document_detail_urls > 0` 表示正文或工具结果把 API JSON endpoint 当成了
+        用户文档页链接，计为异常。
     *   DeerFlow 没有 MMKB 签名密钥，因此这里只能发现截断、格式损坏和漏签，不能验证
         密码学签名是否正确或链接是否过期。
 
 日志示例：
 
 ```text
+mmkb_runtime_context tool=rag_search thread_id=<thread> run_id=<run> base_url=http://host.docker.internal:8000 public_base_url=https://<public-origin> public_base_url_source=context fallback_used=false bearer_present=true configurable_public_base_url_present=false context_public_base_url_present=true
 mmkb_link_stage4 tool=rag_search triggered=true url_fields=8 relative_fields=2 absolutized_fields=2 trigger_ratio=0.2500 protected_media_remaining=0 signed_media_fields=3
-mmkb_tool_resource_validation tool=rag_search thread_id=<thread> run_id=<run> resource_urls=4 signed_media_urls=3 structurally_valid_signed=3 malformed_signed=0 protected_unsigned=0 missing_token_segments=0 invalid_payload_encoding=0 invalid_timestamp=0 invalid_signature=0 document_page_urls=1 structurally_valid_document_pages=1 malformed_document_pages=0 document_origin_matches=1 unexpected_document_origins=0 relative_document_pages=0 document_pages_require_session=1
+mmkb_tool_resource_validation tool=rag_search thread_id=<thread> run_id=<run> public_base_url_source=context public_base_url_fallback_used=false resource_urls=4 signed_media_urls=3 structurally_valid_signed=3 malformed_signed=0 protected_unsigned=0 missing_token_segments=0 invalid_payload_encoding=0 invalid_timestamp=0 invalid_signature=0 document_page_urls=1 structurally_valid_document_pages=1 malformed_document_pages=0 document_origin_matches=1 unexpected_document_origins=0 relative_document_pages=0 document_pages_require_session=1 api_document_detail_urls=0
 ```
 
 `protected_media_remaining > 0` 表示响应仍含
@@ -90,6 +133,24 @@ mmkb_tool_resource_validation tool=rag_search thread_id=<thread> run_id=<run> re
 `unexpected_document_origins > 0` 表示文档页没有指向本次请求的公开源站；
 若该值为 0 但页面仍返回 404，应优先检查浏览器当前 workspace 是否与 Agent bearer
 使用的 workspace 一致。
+`api_document_detail_urls > 0` 表示出现了
+`/api/documents/<id>` API 详情地址；应改为 `/documents/<id>` 文档页地址。
+
+如果正文或中间文件出现 `host.docker.internal`，优先按同一 `thread_id` 检查：
+
+1. MMKB 日志中的 `mmkb_deerflow_agent_payload` 是否有正确
+   `payload_public_base_url`；
+2. DeerFlow `gateway.log` 中的 `deerflow_run_context_merge` 是否显示
+   `incoming_public_base_url_present=true`；
+3. DeerFlow `gateway.log` 中的 `mmkb_runtime_context` 是否显示
+   `fallback_used=true`。如果 source 是 `fallback_public_base_url`，说明本轮
+   使用了公网保险丝；如果 source 是 `fallback_base_url`，说明保险丝也缺失，
+   用户可见链接仍可能暴露内部地址。
+
+`monitor/` 服务会采集 `mmkb_runtime_context`、`deerflow_run_context_merge`、
+`mmkb_tool_resource_validation` 和 `assistant_resource_validation` 事件，并在
+9090 面板展示短 `thread_id/run_id`、工具名、公开地址来源、fallback 状态和
+资源结构异常计数；完整 `thread_id/run_id` 可通过表格 tooltip 查看。
 
 ### 视觉资产工具的两阶段输出
 
@@ -107,12 +168,26 @@ mmkb_tool_resource_validation tool=rag_search thread_id=<thread> run_id=<run> re
 
 `rag_get_document_preview` 只用于读取合并 Markdown 的文字上下文。DeerFlow 会在工具
 返回前移除 preview 中的原始 Markdown 图片引用、`md_images/...` 相对路径、
-受保护的 `/api/documents/<id>/media/...` 媒体路径和 `IMG_META` 注释，并返回
-`preview_image_links_removed` / `preview_image_metadata_removed` 计数。
+受保护的 `/api/documents/<id>/media/...` 媒体路径和原始 `IMG_META` 注释。
+如果图片 Markdown 或 `IMG_META` 中存在有用说明，工具只按白名单提取
+alt、`page_id`、`block_id`、`asset_type`、`ocr.content` 和
+`orphan_text[].content`，转成不含路径的纯文本图片说明；任何 `path`、`url`、
+`file`、`abs` 字段不会输出，保留字段中出现的路径形态字符串也会替换为
+`[路径已省略]`。工具会返回 `preview_image_links_removed`、
+`preview_image_metadata_removed` 和 `preview_image_descriptions_preserved` 计数。
 
 这样做是为了避免模型从 preview Markdown 里复制或拼接不可访问图片路径。需要展示图片
 或读取完整 OCR/caption 时，Agent 必须使用 `rag_get_document_assets` 或
 `rag_get_document_asset`，并逐字复制返回的 `image_url`。
+
+如果 preview 返回 `truncated=true`，它只代表已读取的 preview 窗口，不代表完整正文。
+窗口位置基于清理后的 `preview_text` 字符偏移；返回字段包含 `start_char`、
+`end_char`、`has_before` 和 `has_after`。如果当前预览不足以了解文档概览，例如
+目录、章节结构或开头背景不完整，可以提高 `max_chars`，或使用上一轮返回的
+`end_char` 作为 `start_char` 继续读取下一段 preview。若用户问题要求全文、整篇
+总结、方法、实验、结果、局限或其它需要可靠覆盖后续章节的判断，Agent 应使用
+`rag_get_document_chunks` 或更有针对性的 `rag_search` 补读后续证据；若没有补读，
+应在回答中说明证据范围。
 
 ## 阶段 5：大模型回复生成与链接优先输出 (输出)
 最后阶段依靠预置提示词引导大模型优先使用工具返回的 `document_url`、`image_url`

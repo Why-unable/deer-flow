@@ -19,12 +19,18 @@ logger = logging.getLogger(__name__)
 
 _SIGNED_MEDIA_RE = re.compile(r"/api/document-media/([^\s<>\"')\]?#]+)")
 _PROTECTED_MEDIA_RE = re.compile(r"/api/documents/[^\s<>\"')\]?#]+/media/[^\s<>\"')\]?#]+")
+_API_DOCUMENT_DETAIL_RE = re.compile(
+    r"(?P<url>(?:https?://[^\s<>\"')\]?#/]+)?/api/documents/"
+    r"(?P<document_id>[^\s<>\"')\]?#/.,;:!?，。、；：！？]+))"
+    r"(?=$|[\s<>\"')\]?#,.;:!?，。、；：！？])"
+)
 _DOCUMENT_PAGE_RE = re.compile(
     r"(?<!/api)(?P<url>(?:https?://[^\s<>\"')\]?#/]+)?/documents/(?P<document_id>[^\s<>\"')\]?#/.,;:!?，。、；：！？]+))"
 )
 _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
 _URLSAFE_B64_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _TIMESTAMP_RE = re.compile(r"^[A-Za-z0-9]+$")
+_PROTECTED_MEDIA_METADATA_KEYS = {"md_asset_base"}
 
 
 @dataclass
@@ -47,6 +53,7 @@ class MmkbResourceValidationStats:
     unexpected_document_origins: int = 0
     relative_document_pages: int = 0
     document_pages_require_session: int = 0
+    api_document_detail_urls: int = 0
 
     @property
     def has_failures(self) -> bool:
@@ -55,6 +62,7 @@ class MmkbResourceValidationStats:
             or self.protected_unsigned > 0
             or self.malformed_document_pages > 0
             or self.unexpected_document_origins > 0
+            or self.api_document_detail_urls > 0
         )
 
     def to_dict(self) -> dict[str, int | bool]:
@@ -112,10 +120,10 @@ def validate_mmkb_resource_urls(value: Any, *, expected_base_url: str = "") -> M
     stats = MmkbResourceValidationStats()
     expected_origin = _normalized_origin(expected_base_url)
 
-    def _inspect(item: Any) -> None:
+    def _inspect(item: Any, *, field_name: str = "") -> None:
         if isinstance(item, dict):
-            for child in item.values():
-                _inspect(child)
+            for key, child in item.items():
+                _inspect(child, field_name=str(key))
             return
         if isinstance(item, list):
             for child in item:
@@ -125,14 +133,19 @@ def validate_mmkb_resource_urls(value: Any, *, expected_base_url: str = "") -> M
             return
 
         signed_matches = list(_SIGNED_MEDIA_RE.finditer(item))
-        protected_matches = list(_PROTECTED_MEDIA_RE.finditer(item))
+        protected_matches = [] if field_name in _PROTECTED_MEDIA_METADATA_KEYS else list(_PROTECTED_MEDIA_RE.finditer(item))
+        api_document_detail_matches = list(_API_DOCUMENT_DETAIL_RE.finditer(item))
         document_page_matches = list(_DOCUMENT_PAGE_RE.finditer(item))
         stats.signed_media_urls += len(signed_matches)
         stats.protected_unsigned += len(protected_matches)
+        stats.api_document_detail_urls += len(api_document_detail_matches)
         stats.document_page_urls += len(document_page_matches)
-        stats.resource_urls += len(signed_matches) + len(protected_matches) + len(document_page_matches)
+        stats.resource_urls += len(signed_matches) + len(protected_matches) + len(api_document_detail_matches) + len(document_page_matches)
         for match in signed_matches:
             _validate_signed_token(match.group(1), stats)
+        for match in api_document_detail_matches:
+            if not _UUID_RE.fullmatch(match.group("document_id")):
+                stats.malformed_document_pages += 1
         for match in document_page_matches:
             if not _UUID_RE.fullmatch(match.group("document_id")):
                 stats.malformed_document_pages += 1
@@ -164,7 +177,7 @@ def log_mmkb_resource_validation(event: str, stats: MmkbResourceValidationStats,
         "invalid_payload_encoding=%d invalid_timestamp=%d invalid_signature=%d "
         "document_page_urls=%d structurally_valid_document_pages=%d malformed_document_pages=%d "
         "document_origin_matches=%d unexpected_document_origins=%d relative_document_pages=%d "
-        "document_pages_require_session=%d",
+        "document_pages_require_session=%d api_document_detail_urls=%d",
         event,
         context_text,
         stats.resource_urls,
@@ -183,4 +196,5 @@ def log_mmkb_resource_validation(event: str, stats: MmkbResourceValidationStats,
         stats.unexpected_document_origins,
         stats.relative_document_pages,
         stats.document_pages_require_session,
+        stats.api_document_detail_urls,
     )

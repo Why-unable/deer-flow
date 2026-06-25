@@ -67,8 +67,9 @@ report_active_skill(skill_name="local-deep-research")
 1. 默认先调用一次 `rag_search(query="<topic>", mode="hybrid", limit=10)`。
 2. 如果命中的 chunks/assets 已足以支持可靠回答，直接综合并回答。
 3. 只有在检索片段缺少必要上下文、需要精确证据或涉及视觉细节时，才继续调用 `rag_get_document_preview`、`rag_get_document_chunks` 或视觉资产工具。
-4. 不要把 `rag_list_documents` 当作普通主题查询的固定前置步骤；它用于文档清单、范围发现或多文档综述候选池。
-5. 除非用户明确要求报告、文件或可下载交付物，否则直接在聊天正文中回答，不默认生成文件。
+4. 如果 `rag_get_document_preview` 返回 `truncated=true`，且当前预览不足以了解文档概览，例如目录、章节结构或开头背景不完整，可以提高 `max_chars`，或使用上一轮返回的 `end_char` 作为 `start_char` 继续读取下一段 preview；若用户问题涉及全文、整篇、完整总结、方法、实验、结果、局限或其它需要覆盖后续章节的判断，优先使用 `rag_get_document_chunks` 或更有针对性的 `rag_search` 后再回答。
+5. 不要把 `rag_list_documents` 当作普通主题查询的固定前置步骤；它用于文档清单、范围发现或多文档综述候选池。
+6. 除非用户明确要求报告、文件或可下载交付物，否则直接在聊天正文中回答，不默认生成文件。
 
 ### 本地路径禁用规则
 
@@ -168,7 +169,7 @@ rag_search(query="<topic>", mode="hybrid", limit=10)
 1. **具体查询**：针对每个子主题使用精确的 `rag_search` 查询。
 2. **多种表述**：尝试不同名称、同义词、缩写和实现术语。
 3. **文档元数据**：对相关候选文档使用 `rag_get_document`。
-4. **阅读完整上下文**：对最重要的文档使用 `rag_get_document_preview`。
+4. **阅读预览与必要补读**：对最重要的文档使用 `rag_get_document_preview`；若返回 `truncated=true` 且当前预览不足以建立概览，可以提高 `max_chars`，或用上一轮返回的 `end_char` 作为 `start_char` 继续读取下一段 preview；若任务需要覆盖后续章节或整篇证据，继续读取 `rag_get_document_chunks` 或用更精确 query 检索后续内容。
 5. **跟进本地线索**：如果预览中提到其它模块、文档名、术语或相关系统，也继续搜索这些内容。
 
 示例：
@@ -183,7 +184,7 @@ rag_search(query="<topic>", mode="hybrid", limit=10)
 
 随后检查：
 - rag_get_document(document_id)
-- rag_get_document_preview(document_id, max_chars=12000)
+- rag_get_document_preview(document_id, max_chars=12000, start_char=0)
 ```
 
 ### 阶段 4：精确证据和视觉资产检查
@@ -215,6 +216,7 @@ rag_search(query="<topic>", mode="hybrid", limit=10)
 - 需要精确引用 chunk id、页码或原始文本。
 - 需要把 `assets.from_chunk_ids` 和具体文本块对齐。
 - `rag_get_document_preview` 太长，且你只需要按 chunk 精确阅读。
+- `rag_get_document_preview` 返回 `truncated=true`，而用户问题需要全文、方法、实验、结果、局限或完整证据。
 
 #### 何时使用 rag_get_document_assets
 
@@ -296,6 +298,7 @@ rag_search(query="<topic>", mode="hybrid", limit=10)
 - [ ] 我是否已从至少 3-5 个角度搜索本地知识库？
 - [ ] 我是否已检查最相关的候选文档？
 - [ ] 我是否已对高价值文档使用 `rag_get_document_preview`？
+- [ ] 如果 preview 返回 `truncated=true` 且问题需要后续章节或整篇证据，我是否已继续读取 chunks、进行针对性检索，或明确说明只基于已读取预览？
 - [ ] 如果问题涉及图表/截图/扫描页/图片 OCR，我是否已检查 `assets` 或使用 `rag_get_document_assets`？
 - [ ] 如果需要精确上下文，我是否已使用 `rag_get_document_chunks` 对齐 chunk id、页码或图片关联？
 - [ ] 我是否能将关键判断绑定到本地文档证据？
@@ -367,6 +370,8 @@ rag_search(query="<topic>", mode="hybrid", limit=10)
 - 需要周边上下文、章节结构，或同一文档中的多个细节
 - 最终回答将基于该文档提出强判断
 
+如果返回 `truncated=true`，说明当前只读到了文档的一段 preview 窗口。若当前预览不足以了解文档概览，例如目录、章节结构或开头背景不完整，可以提高 `max_chars`，或使用返回的 `end_char` 作为下一次 `start_char` 继续读取下一段 preview。对“全文讲了什么”、完整总结、方法、实验、结果、局限或其它需要后续章节证据的问题，继续调用 `rag_get_document_chunks` 或进行针对性检索；若仍只基于 preview 回答，应在答案中说明证据范围。
+
 ### 何时使用 rag_get_document_chunks
 
 在以下情况使用 `rag_get_document_chunks`：
@@ -374,6 +379,7 @@ rag_search(query="<topic>", mode="hybrid", limit=10)
 - 需要验证检索命中的 chunk 是否被正确理解
 - 需要使用 chunk id、页码或原文片段作为证据
 - 需要把图片资产的 `from_chunk_ids` 映射回具体文本
+- 已读 preview 被截断，但用户问题需要覆盖全文或关键后续章节
 
 ### 何时使用 rag_get_document_assets
 

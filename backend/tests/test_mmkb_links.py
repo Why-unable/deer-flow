@@ -36,9 +36,48 @@ def test_process_mmkb_response_links_preserves_existing_absolutization_behavior(
     assert stats.url_fields == 2
     assert stats.relative_fields == 2
     assert stats.absolutized_fields == 2
+    assert stats.protected_media_remaining == 0
     assert stats.signed_media_fields == 1
     assert stats.protected_media_remaining == 0
     assert stats.stage4_trigger_ratio == 1.0
+
+
+def test_process_mmkb_response_links_canonicalizes_api_document_detail_url():
+    document_id = "39828711-5eb4-4722-aa07-2f59f12b2590"
+    payload = {
+        "document_url": f"/api/documents/{document_id}",
+        "md_asset_base": f"/api/documents/{document_id}/media/markdown/",
+    }
+
+    processed, stats = process_mmkb_response_links(payload, "https://mmkb.example")
+
+    assert processed["document_url"] == f"https://mmkb.example/documents/{document_id}"
+    assert processed["md_asset_base"] == f"https://mmkb.example/api/documents/{document_id}/media/markdown/"
+    assert stats.url_fields == 2
+    assert stats.relative_fields == 2
+    assert stats.absolutized_fields == 2
+
+
+def test_process_mmkb_response_links_rewrites_internal_document_origin_to_public_base():
+    document_id = "39828711-5eb4-4722-aa07-2f59f12b2590"
+    payload = {
+        "document_url": f"http://host.docker.internal:8000/documents/{document_id}",
+        "nested": {
+            "document_url": f"http://host.docker.internal:8000/api/documents/{document_id}",
+        },
+    }
+
+    processed, stats = process_mmkb_response_links(payload, "https://mmkb.example/")
+
+    assert processed == {
+        "document_url": f"https://mmkb.example/documents/{document_id}",
+        "nested": {
+            "document_url": f"https://mmkb.example/documents/{document_id}",
+        },
+    }
+    assert stats.url_fields == 2
+    assert stats.relative_fields == 0
+    assert stats.absolutized_fields == 0
 
 
 def test_process_mmkb_response_links_detects_media_that_mmkb_did_not_sign():
@@ -152,6 +191,53 @@ def test_semantic_service_logs_document_page_origin_match(caplog: pytest.LogCapt
     assert "document_page_urls=1" in validation_log
     assert "document_origin_matches=1" in validation_log
     assert "document_pages_require_session=1" in validation_log
+
+
+def test_semantic_service_adds_document_page_url_to_document_metadata():
+    document_id = "39828711-5eb4-4722-aa07-2f59f12b2590"
+
+    class FakeClient:
+        def get_document(self, *, document_id: str):
+            return {
+                "id": document_id,
+                "title": "paper.pdf",
+                "md_asset_base": f"/api/documents/{document_id}/media/markdown/",
+            }
+
+    mmkb_service = MMKBService(
+        tool_name="rag_get_document",
+        client=FakeClient(),
+        public_base_url="https://mmkb.example",
+    )
+
+    result = mmkb_service.get_document(document_id=document_id)
+
+    assert result["document_url"] == f"https://mmkb.example/documents/{document_id}"
+    assert result["md_asset_base"] == f"https://mmkb.example/api/documents/{document_id}/media/markdown/"
+
+
+def test_semantic_service_adds_document_page_url_to_document_scoped_content_tools():
+    document_id = "39828711-5eb4-4722-aa07-2f59f12b2590"
+
+    class FakeClient:
+        def get_document_preview(self, *, document_id: str):
+            return {"document_id": document_id, "preview_text": "preview"}
+
+        def get_document_chunks(self, *, document_id: str):
+            return {"document_id": document_id, "items": []}
+
+        def get_document_assets(self, *, document_id: str):
+            return {"document_id": document_id, "items": []}
+
+    mmkb_service = MMKBService(
+        tool_name="rag_get_document_preview",
+        client=FakeClient(),
+        public_base_url="https://mmkb.example",
+    )
+
+    assert mmkb_service.get_document_preview(document_id=document_id)["document_url"] == f"https://mmkb.example/documents/{document_id}"
+    assert mmkb_service.get_document_chunks(document_id=document_id)["document_url"] == f"https://mmkb.example/documents/{document_id}"
+    assert mmkb_service.get_document_assets(document_id=document_id)["document_url"] == f"https://mmkb.example/documents/{document_id}"
 
 
 def test_semantic_service_logs_mmkb_resource_structure_failures(caplog: pytest.LogCaptureFixture):

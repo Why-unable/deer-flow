@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Only these caller-provided values are needed by MMKB RAG tools in subagents.
 # Keep the allowlist narrow so unrelated parent runtime configuration and
 # secrets are not copied into delegated executions.
-_SUBAGENT_CONFIGURABLE_KEYS = ("mmkb_bearer_token",)
+_SUBAGENT_CONFIGURABLE_KEYS = ("mmkb_bearer_token", "public_base_url")
 _SUBAGENT_CONTEXT_KEYS = (
     "public_base_url",
     "mmkb_workspace_id",
@@ -183,6 +183,15 @@ def _get_runtime_app_config(runtime: Any) -> "AppConfig | None":
     return None
 
 
+def _runtime_value_from_containers(key: str, primary: dict[str, Any], fallback: dict[str, Any]) -> Any:
+    """Return a runtime value from the preferred container with fallback."""
+
+    value = primary.get(key)
+    if value is not None:
+        return value
+    return fallback.get(key)
+
+
 def _get_subagent_runtime_values(runtime: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     """Extract the narrow parent runtime subset delegated tools may need."""
     if runtime is None:
@@ -197,8 +206,16 @@ def _get_subagent_runtime_values(runtime: Any) -> tuple[dict[str, Any], dict[str
     if not isinstance(context, dict):
         context = {}
 
-    inherited_configurable = {key: configurable[key] for key in _SUBAGENT_CONFIGURABLE_KEYS if configurable.get(key) is not None}
-    inherited_context = {key: context[key] for key in _SUBAGENT_CONTEXT_KEYS if context.get(key) is not None}
+    inherited_configurable = {
+        key: value
+        for key in _SUBAGENT_CONFIGURABLE_KEYS
+        if (value := _runtime_value_from_containers(key, configurable, context)) is not None
+    }
+    inherited_context = {
+        key: value
+        for key in _SUBAGENT_CONTEXT_KEYS
+        if (value := _runtime_value_from_containers(key, context, configurable)) is not None
+    }
     return inherited_configurable, inherited_context
 
 

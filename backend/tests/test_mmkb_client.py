@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 import httpx
@@ -15,43 +16,89 @@ class _FakeAppConfig:
         return SimpleNamespace(model_extra={"base_url": "http://internal-mmkb:8000/", "timeout": 12})
 
 
-def test_runtime_context_prefers_request_scoped_identity_and_public_url(monkeypatch: pytest.MonkeyPatch):
+class _FakeAppConfigWithPublicFallback:
+    def get_tool_config(self, _tool_name: str):
+        return SimpleNamespace(
+            model_extra={
+                "base_url": "http://internal-mmkb:8000/",
+                "public_base_url_fallback": "https://public-fallback.example/",
+                "timeout": 12,
+            }
+        )
+
+
+def test_runtime_context_prefers_request_scoped_identity_and_public_url(monkeypatch: pytest.MonkeyPatch, caplog):
     monkeypatch.setattr(context_module, "get_app_config", lambda: _FakeAppConfig())
 
-    runtime = context_module.resolve_mmkb_runtime_context(
-        {
-            "configurable": {
-                "mmkb_bearer_token": "Bearer configurable-token",
-                "public_base_url": "https://public.example/",
-                "thread_id": "thread-1",
+    with caplog.at_level(logging.INFO, logger="deerflow.tools.custom.rag.context"):
+        runtime = context_module.resolve_mmkb_runtime_context(
+            {
+                "configurable": {
+                    "mmkb_bearer_token": "Bearer configurable-token",
+                    "public_base_url": "https://public.example/",
+                    "thread_id": "thread-1",
+                },
+                "context": {
+                    "mmkb_bearer_token": "Bearer context-token",
+                    "public_base_url": "https://ignored.example",
+                    "run_id": "run-1",
+                },
             },
-            "context": {
-                "mmkb_bearer_token": "Bearer context-token",
-                "public_base_url": "https://ignored.example",
-                "run_id": "run-1",
-            },
-        },
-        tool_name="rag_search",
-    )
+            tool_name="rag_search",
+        )
 
     assert runtime.base_url == "http://internal-mmkb:8000"
     assert runtime.timeout == 12
     assert runtime.public_base_url == "https://public.example"
+    assert runtime.public_base_url_source == "configurable"
+    assert runtime.public_base_url_fallback_used is False
     assert runtime.thread_id == "thread-1"
     assert runtime.run_id == "run-1"
     assert runtime.headers == {
         "Authorization": "Bearer configurable-token",
         "X-MMKB-Public-Base-URL": "https://public.example",
     }
+    assert "mmkb_runtime_context tool=rag_search" in caplog.text
+    assert "public_base_url_source=configurable" in caplog.text
+    assert "fallback_used=false" in caplog.text
+    assert "bearer_present=true" in caplog.text
 
 
-def test_runtime_context_falls_back_to_static_base_url(monkeypatch: pytest.MonkeyPatch):
+def test_runtime_context_falls_back_to_static_base_url(monkeypatch: pytest.MonkeyPatch, caplog):
     monkeypatch.setattr(context_module, "get_app_config", lambda: _FakeAppConfig())
 
-    runtime = context_module.resolve_mmkb_runtime_context({}, tool_name="rag_search")
+    with caplog.at_level(logging.INFO, logger="deerflow.tools.custom.rag.context"):
+        runtime = context_module.resolve_mmkb_runtime_context({}, tool_name="rag_search")
 
     assert runtime.public_base_url == "http://internal-mmkb:8000"
+    assert runtime.public_base_url_source == "fallback_base_url"
+    assert runtime.public_base_url_fallback_used is True
     assert runtime.headers == {"X-MMKB-Public-Base-URL": "http://internal-mmkb:8000"}
+    assert "mmkb_runtime_context tool=rag_search" in caplog.text
+    assert "public_base_url_source=fallback_base_url" in caplog.text
+    assert "fallback_used=true" in caplog.text
+
+
+def test_runtime_context_uses_public_base_url_fallback_before_static_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog,
+):
+    monkeypatch.setattr(context_module, "get_app_config", lambda: _FakeAppConfigWithPublicFallback())
+
+    with caplog.at_level(logging.INFO, logger="deerflow.tools.custom.rag.context"):
+        runtime = context_module.resolve_mmkb_runtime_context({}, tool_name="rag_search")
+
+    assert runtime.base_url == "http://internal-mmkb:8000"
+    assert runtime.timeout == 12
+    assert runtime.public_base_url == "https://public-fallback.example"
+    assert runtime.public_base_url_source == "fallback_public_base_url"
+    assert runtime.public_base_url_fallback_used is True
+    assert runtime.headers == {"X-MMKB-Public-Base-URL": "https://public-fallback.example"}
+    assert "mmkb_runtime_context tool=rag_search" in caplog.text
+    assert "public_base_url_source=fallback_public_base_url" in caplog.text
+    assert "fallback_used=true" in caplog.text
+    assert "base_url=http://internal-mmkb:8000" in caplog.text
+    assert "public_base_url=https://public-fallback.example" in caplog.text
 
 
 def test_http_client_preserves_http_error_contract(monkeypatch: pytest.MonkeyPatch):

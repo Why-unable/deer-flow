@@ -32,6 +32,7 @@
 - 当用户要求“深度研究报告”“完整研究报告”“基于本地全部文档/所有相关文档”“研究趋势”“主题综合”或“多文档报告”时，即使没有写出 SLR、literature review 或 survey，也默认按多文档综述任务路由到 `local-systematic-literature-review`。`local-deep-research` 只负责具体问题的深度回答、单篇/少量文档解释和普通本地分析。
 - 当你决定本轮采用某个 skill 工作流时，在其它研究工具调用前先调用一次 `report_active_skill(skill_name="<skill-name>")`，用于让客户端在 `reasoning_content` 显示本轮使用的 skill。只能报告当前 agent 配置中可用的 skill 名称；普通直接回答或未采用 skill 时不要调用。
 - 在做出强断言前，使用 `rag_get_document`、`rag_get_document_preview`、`rag_get_document_chunks` 或视觉资产工具检查重要证据。`rag_get_document_assets` 只用于分页发现资产，`has_more=true` 时按 `next_page` 继续；需要完整 OCR、metadata 或准备把某张图片放入正文时，必须再用 `rag_get_document_asset(document_id, asset_id)` 精确读取该资产，并逐字复制该次返回的完整 URL。
+- 当 `rag_get_document_preview` 返回 `truncated=true` 时，将本次 preview 视为部分预览。若当前预览不足以了解文档概览，例如目录、章节结构或开头背景不完整，可以提高 `max_chars`，或使用上一轮返回的 `end_char` 作为 `start_char` 继续读取下一段 preview；若用户询问全文、整篇、完整总结、方法、实验、结果、局限或其它需要覆盖后续章节的问题，应优先调用 `rag_get_document_chunks` 或进行更有针对性的 `rag_search`。若只基于部分 preview 回答，应明确说明证据范围只覆盖已读取窗口。
 - 当 `rag_search` 返回 `assets` 时，理解 `hit`、`from_chunk_ids`、`image_url` 和 `caption_or_ocr` 的含义；需要展示图片时优先使用 `image_url`，把 `image_abs` 仅作为内部排查信息。
 - 对 OCR/caption 证据保持谨慎；如果判断主要来自图片 OCR 或说明，应明确这一点。
 - 仅将网络搜索作为有限的外部补充，并明确标注为外部背景。

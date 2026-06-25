@@ -203,27 +203,50 @@ workspace 权限的文档详情页面。
 - 工具选择描述区分主题检索与清单发现：普通本地知识主题查询默认从
   `rag_search` 开始；`rag_list_documents` 用于文档清单、范围发现和多文档综述
   候选池，不作为普通主题查询的固定前置步骤。
-- `context.py` 统一解析工具静态 `base_url/timeout` 与请求级
+- `context.py` 统一解析工具静态 `base_url/timeout/public_base_url_fallback` 与请求级
   `mmkb_bearer_token/public_base_url`。
+- `context.py` 每次构造 MMKB 工具运行上下文时输出
+  `mmkb_runtime_context` 聚合日志，记录公开地址来源
+  `public_base_url_source=configurable|context|fallback_public_base_url|fallback_base_url`、
+  `fallback_used`、bearer 是否存在和 thread/run 标识；日志不包含 bearer token
+  或签名媒体 token。若出现 `public_base_url_source=fallback_public_base_url`，
+  说明本次工具调用没有拿到 MMKB 代理传入的公开源站，但已使用工具静态公网
+  保险丝；若出现 `fallback_base_url`，说明保险丝也缺失，用户可见链接可能
+  退回到 Docker 内部 `base_url`。
 - `client.py` 定义 transport-neutral 的语义 `MMKBClient` protocol；当前
   `HTTPMMKBClient` 负责把 `search`、`get_document_assets` 等方法映射为 HTTP
   endpoint，并保留现有 HTTP 错误 JSON 契约。
-- `service.py` 在 transport 返回后统一应用阶段 4 链接处理和聚合日志。
+- `service.py` 在 transport 返回后统一应用阶段 4 链接处理和聚合日志；
+  `rag_get_document` 会为 MMKB API 详情响应补充规范
+  `document_url=/documents/<document_id>`，避免模型把
+  `/api/documents/<document_id>` 详情 endpoint 当成用户可见文档页。
 - `assets.py` 集中管理紧凑分页目录、caption 裁减和精确单资产筛选。
 - `utils/mmkb_resource_validation.py` 对 MMKB 媒体 URL 执行不依赖签名密钥的结构
-  校验，只记录计数和原因，不记录完整 URL、token 或文档 ID。
+  校验，并统计误用的 `/api/documents/<id>` API 详情地址
+  (`api_document_detail_urls`)；结构化工具结果中的 `md_asset_base` 作为 API 元数据
+  基路径处理，不计为未签名媒体 URL；只记录计数和原因，不记录完整 URL、token
+  或文档 ID。
 - Base URL 来自每个工具的 `base_url` 配置，默认是
   `http://host.docker.internal:8000`，用于 Docker 容器访问宿主机上的 MMKB。
 - runtime 中的 `public_base_url` 优先用于把返回 URL 绝对化。
 - runtime 中的 `mmkb_bearer_token` 会作为 `Authorization` header。
-- lead agent 使用 `task` 派发子 Agent 时，会通过白名单把
-  `mmkb_bearer_token`、`public_base_url` 和 MMKB 身份上下文传入子 Agent
-  runtime，并同步写入子 Agent 的 `RunnableConfig.context`；因此子 Agent 调用
-  `rag_*` 时工具可以继续读取同一 workspace 范围的鉴权和公网 base URL，不会
-  因为 delegated run 丢失 bearer 而返回 `401`，也不会退回 Docker 内部
-  `base_url` 生成用户可见链接。其他父运行时配置和 secret 不会被自动复制。
+- Gateway 合并 MMKB 代理传入的 run context 时输出
+  `deerflow_run_context_merge` 日志，记录 `incoming_public_base_url_present`、
+  合并后的 `configurable_public_base_url/context_public_base_url` 以及
+  workspace/user 是否存在。该日志用于区分 MMKB 是否未传、Gateway 是否未合并、
+  以及 RAG 工具是否在后续阶段回退。
+- lead agent 使用 `task` 派发子 Agent 时，会从父运行时的
+  `config.configurable` 和 `context` 中按白名单提取 `mmkb_bearer_token`、
+  `public_base_url` 和 MMKB 身份上下文，传入子 Agent runtime，并同步写入子
+  Agent 的 `RunnableConfig.configurable` 与 `RunnableConfig.context`；因此子 Agent 调用 `rag_*` 时工具可以继续
+  读取同一 workspace 范围的鉴权和公网 base URL，不会因为 delegated run 丢失
+  bearer 而返回 `401`，也不会退回 Docker 内部 `base_url` 生成用户可见链接。
+  其他父运行时配置和 secret 不会被自动复制。
 - HTTP 失败会作为 JSON error object 返回，而不是直接 raise。
 - 相对的 `*_url`、`*_path`、`*_base` 字段会尽量转换为绝对 URL。
+- 文档页 `document_url` 会统一归一为本轮 `public_base_url` 下的
+  `/documents/<document_id>`；即使中间层出现 `host.docker.internal` 或
+  `/api/documents/<document_id>`，也不会作为用户可见文档链接透出。
 - DeerFlow 侧的响应链接转换集中在
   `backend/packages/harness/deerflow/tools/custom/rag/mmkb_links.py`。该模块保持
   MMKB 的资源签名职责不变，只负责阶段 4 绝对化和可观测性统计。
@@ -251,9 +274,20 @@ workspace 权限的文档详情页面。
   Agent 应先用资产目录发现候选，再用单资产详情确认准备展示的媒体。
 - `rag_get_document_preview` 只提供文字上下文。工具返回前会移除 preview Markdown
   中的原始图片引用、`md_images/...` 相对路径、受保护的
-  `/api/documents/<id>/media/...` 路径和 `IMG_META` 注释，并返回移除计数。
+  `/api/documents/<id>/media/...` 路径和原始 `IMG_META` 注释。若图片有
+  alt、`page_id`、`block_id`、`asset_type`、`ocr.content` 或
+  `orphan_text[].content`，工具会将这些白名单字段转成不含路径的纯文本图片说明；
+  任何 `path`、`url`、`file`、`abs` 字段不输出，保留字段中出现的路径形态字符串
+  也会替换为 `[路径已省略]`。返回中包含移除和说明保留计数。
   需要展示图片时必须改用 `rag_get_document_assets` 或
   `rag_get_document_asset` 取得签名 `image_url`。
+- `rag_get_document_preview` 返回 `truncated=true` 时只表示已读取部分预览。
+  对全文、整篇总结、方法、实验、结果、局限或其它全文级判断，Agent prompt、
+  工具说明和本地 research skills 均要求优先读取 `rag_get_document_chunks`
+  或用针对性 `rag_search` 补读后续章节；只有当前预览不足以建立文档概览时，
+  才提高 `max_chars`，或使用上一轮返回的 `end_char` 作为 `start_char`
+  继续读取下一段 preview。preview 窗口偏移基于清理后的 `preview_text`
+  字符位置；若未补读，回答需说明证据范围。
 - 工具 docstring 明确提示：MMKB 返回的 `markdown_merged_path` 等路径是
   API 元数据，不是 sandbox 内可读文件。Agent 不应把这些路径传给
   `read_file`、`grep` 或 `bash`。
@@ -293,7 +327,45 @@ tools:
     timeout: 30
 ```
 
-8 个 RAG 工具都采用同样的注册模式。
+8 个 RAG 工具都采用同样的注册模式。`public_base_url_fallback` 仍是工具支持的
+可选保险丝，但当前默认配置不写固定公网域名；正常情况下应由 MMKB 请求上下文
+传入 `public_base_url`。
+
+## MMKB Agent 输出适配
+
+相关文件位于同级 MMKB 项目：
+
+- `app/services/deerflow_agent_adapter.py`
+- `app/services/chat_completion.py`
+- `test/test_deerflow_agent_adapter.py`
+
+MMKB 的 `model=agent` 模式消费 DeerFlow
+`/api/threads/{thread_id}/runs/stream` SSE，并把 DeerFlow 事件转换成
+OpenAI 兼容的 `chat.completion.chunk`：
+
+- `messages` / `messages-tuple` 中的 assistant 正文转换为
+  `delta.content`；
+- 工具调用、工具结果、技能选择和子任务生命周期转换为 `delta.reasoning`；
+- `values.artifacts` 中的新 artifact 路径转换为结构化的
+  `[文件] 已生成` 下载入口；
+- `custom` 事件中的 `task_started`、`task_running`、`task_completed`、
+  `task_failed`、`task_cancelled` 和 `task_timed_out` 转换为简短中文状态行。
+
+`task_running` 的进度行只使用 DeerFlow `task` 工具事件里的
+`message_index`。这个值表示子 Agent 已产生第几条新的中间 AI 消息，不表示
+真实业务阶段、文档处理序号或百分比进度。因此 MMKB 侧展示为：
+
+```text
+[子任务] 进行中：<description>（第 N 次进展更新）
+```
+
+这里的 “第 N 次进展更新” 是展示层的中间消息序号，不能用于判断任务是否已
+完成第 N 个研究步骤。真实完成、失败、取消和超时仍以对应 terminal custom
+event 以及 `task` 工具最终结果为准。
+
+为了避免把子 Agent 的完整中间消息或完整结果泄露到思考过程，MMKB adapter
+只输出状态摘要。`task_running` 会按 `task_id:message_index` 去重；
+`task_completed` 只显示完成状态，不回显完整结果正文。
 
 ## DeerFlow Artifact 下载链接
 
@@ -411,6 +483,9 @@ SOUL 行为：
 
 - 明确、简短的本地知识问答先使用一次 `rag_search`，证据充分时直接回答；
 - 仅在片段缺少上下文、需要精确证据或视觉细节时继续读取 preview/chunks/assets；
+- 如果 preview 返回 `truncated=true` 且问题需要全文级证据，继续读取 chunks、
+  做针对性检索，或说明只基于已读取预览；仅在概览不足时提高 `max_chars`，
+  或使用上一轮返回的 `end_char` 作为 `start_char` 继续读取下一段 preview；
 - `rag_list_documents` 不作为普通主题查询的固定前置步骤；
 - 除非用户明确要求文件交付，否则轻量问答不默认生成报告文件；
 - 在需要进行重研究的本地文档回答前使用完整研究流程；
@@ -459,8 +534,11 @@ SOUL 行为：
 2. 使用 `rag_list_documents`、多轮 `rag_search` 和必要的
    `rag_list_collections` 发现候选文档；
 3. 用明确的纳入/排除标准筛选候选文档，避免把 chunk 当作文档重复计数；
-4. 对纳入文档读取 `rag_get_document`、`rag_get_document_preview`，
-   必要时读取 `rag_get_document_chunks` 和 `rag_get_document_assets`；
+4. 对纳入文档读取 `rag_get_document`、`rag_get_document_preview`；
+   若 preview 返回 `truncated=true` 且该文档将支持全文级结论，补读
+   `rag_get_document_chunks` 或使用针对性 `rag_search`；仅在概览不足时提高
+   `max_chars`，或使用上一轮返回的 `end_char` 作为 `start_char` 继续读取
+   下一段 preview；必要时读取 `rag_get_document_assets`；
 5. 对每篇文档抽取统一字段，例如目的/问题、方法/框架、关键发现、
    建议、局限和本地证据；
 6. 使用 subagent 批量抽取时，每个 batch 写入
@@ -592,9 +670,12 @@ make docker-logs-gateway
 - 每秒调用 Docker stats，记录各容器最近 300 个内存数据点；
 - 使用 FastAPI 提供容器列表、历史查询和 WebSocket 实时快照；
 - 使用 Chart.js 页面展示当前内存、最近峰值和约 5 分钟趋势。
-- 从 DeerFlow 容器日志中采集脱敏的 `mmkb_tool_resource_validation` 和
-  `assistant_resource_validation` 聚合事件，展示媒体结构异常、文档页结构、
-  源站异常和 session/workspace 依赖计数。
+- 从 DeerFlow 容器日志中采集脱敏的 `mmkb_runtime_context`、
+  `deerflow_run_context_merge`、`mmkb_tool_resource_validation` 和
+  `assistant_resource_validation` 聚合事件，展示 `thread_id/run_id` 短标识、
+  工具名、公开地址来源、媒体结构异常、文档页结构、源站异常和
+  session/workspace 依赖计数；完整 `thread_id/run_id` 仅放在浏览器 tooltip，
+  不展示或保存文档 ID、签名 token、bearer token。
 - 开发 Gateway 会把应用日志重定向到共享的 `logs/gateway.log`，monitor 以只读
   方式增量读取该文件，同时保留 Docker stdout 采集作为补充。
 - Docker stats 和日志读取通过 worker thread 执行，避免同步 Docker SDK 调用阻塞

@@ -227,7 +227,49 @@ DeerFlow 长期记忆系统
         └── 调用 storage.reload 强制刷新
 ```
 
-### 3.1 消息筛选
+### 3.1 会话日期提醒
+
+“会话日期提醒”不是长期记忆本身，而是
+`DynamicContextMiddleware.before_agent()` 在模型看到用户消息前插入的一条隐藏
+`HumanMessage`。它的内容使用 `<system-reminder>` 包裹，至少包含当前日期：
+
+```text
+<system-reminder>
+<current_date>2026-06-23, Tuesday</current_date>
+</system-reminder>
+```
+
+当 `memory.enabled: true` 且 `memory.injection_enabled: true` 时，这条提醒还会
+同时包含 `<memory>...</memory>`；如果记忆注入关闭，则只包含日期。它的作用有
+两个：
+
+- 告诉模型“当前日期”，让“今天、昨天、上周、最近”等相对时间表达有明确基准；
+- 把记忆注入从静态系统提示词中移出来，使基础 system prompt 在不同用户和会话
+  间保持稳定，便于前缀缓存复用。
+
+提醒是“会话级”的：新会话第一轮会在第一条真实用户消息前插入完整提醒，并通过
+`additional_kwargs.dynamic_context_reminder=true` 标记为隐藏动态上下文消息。
+后续同一天的轮次不会重复注入。若同一会话跨过午夜，系统会在当前轮前再插入一条
+轻量日期更新提醒，只更新 `<current_date>`，不重新注入完整记忆：
+
+```text
+第一天首轮：
+  hidden reminder = memory + current_date
+  real user message = 用户原始问题
+
+同一天后续轮次：
+  不新增 reminder
+
+跨日后的下一轮：
+  hidden reminder = 新 current_date
+  real user message = 用户原始问题
+```
+
+这条隐藏提醒会进入 LangGraph 的消息状态，因此会被同一会话后续轮次看到；但它
+不是 `memory.json` 的一部分，也不会被当作用户事实保存。摘要压缩中间件会识别
+并保留这种隐藏提醒，避免压缩后系统误以为还没有注入过日期。
+
+### 3.2 消息筛选
 
 `MemoryMiddleware.after_agent()` 在 Agent 完成后运行。它只在
 `memory.enabled: true` 且能够取得 `thread_id` 时工作。
@@ -276,7 +318,7 @@ DeerFlow 长期记忆系统
 “具体肯定了什么”。因此，这里的“正向强化”不是强化学习，也不会直接提升已有
 事实的置信度；更准确的名称是“正向反馈提示”。
 
-### 3.2 防抖队列
+### 3.3 防抖队列
 
 队列使用 `(thread_id, user_id, agent_name)` 作为更新目标的唯一键。在
 `debounce_seconds` 时间内，同一目标的新内容会替换旧内容，并合并已检测到的
@@ -290,6 +332,42 @@ DeerFlow 长期记忆系统
 例如，第一次入队检测到纠错，第二次入队没有检测到纠错，最终
 `correction_detected` 仍为 `true`。它不会直接改写记忆，而是确保后续 LLM
 仍收到“这批会话中曾出现纠错，请重点分析”的提示。
+
+因此，如果会话前 `n` 条筛选后消息已经在较早一次更新中被学习过，后续新状态又
+传入完整的 `n+m` 条筛选后消息，队列不会自动只截取新增的 `m` 条。实际执行是：
+
+1. `MemoryMiddleware.after_agent()` 从当前 `ThreadState.messages` 生成一份新的
+   筛选后完整消息列表；
+2. `MemoryUpdateQueue` 用这份最新完整列表替换同键旧列表；
+3. Timer 到期后，`MemoryUpdater` 将“当前 `memory.json`”和“这份完整筛选后
+   对话文本”一起交给记忆更新 LLM；
+4. LLM 根据已有记忆和完整对话输出增量建议；
+5. `_apply_updates()` 再按 `shouldUpdate`、`factsToRemove`、`newFacts`、
+   `confidence` 和内容去重规则落盘。
+
+换句话说，`n+m` 条会一起进入 LLM 提示词，去重和避免重复保存主要依赖两层机制：
+一是提示词中同时给出当前 `memory.json`，让 LLM 不必重复输出已存在事实；二是
+`_apply_updates()` 会对新事实按规范化后的 `content` 去重。如果同一事实只是换
+了一种说法，代码层面不会做语义去重，仍依赖 LLM 判断是否重复。
+
+例子：
+
+```text
+第一次已学习：
+  messages = [U1, A1, U2, A2]
+  memory.json 已保存 fact_1 = "用户偏好 SQLite 本地调试。"
+
+下一轮后当前状态：
+  messages = [U1, A1, U2, A2, U3, A3]
+
+Timer 到期后实际交给记忆 LLM：
+  current_memory = 包含 fact_1 的 memory.json
+  conversation = U1/A1/U2/A2/U3/A3 的筛选后文本
+
+合理输出：
+  不重复输出 "用户偏好 SQLite 本地调试。"
+  只输出 U3/A3 中新出现的长期事实，或输出 factsToRemove 修正旧事实
+```
 
 队列通过 daemon `threading.Timer` 在后台处理。由于 Python `ContextVar`
 不会自动传播到新线程，`MemoryMiddleware` 必须在入队时显式捕获 `user_id`，
@@ -311,7 +389,7 @@ DeerFlow 长期记忆系统
 该队列是进程内、尽力而为的机制。进程在后台任务完成前退出时，尚未处理的更新
 可能丢失。
 
-### 3.3 LLM 提取与合并
+### 3.4 LLM 提取与合并
 
 `MemoryUpdater` 使用 `memory.model_name` 指定的模型；未指定时使用默认模型，
 并强制关闭 thinking。更新调用使用同步 `model.invoke()` 路径，异步调用场景会
@@ -336,6 +414,39 @@ Alice 请求 ──> 工作线程等待记忆 LLM
 把控制权交还事件循环；同步 `update_memory()` 在检测到运行中的事件循环时会提交
 到专用同步线程池，但随后等待 `future.result()`，因此同步调用方自身仍会等待。
 防抖队列本来就在 Timer 后台线程中运行，不会占用原请求的事件循环。
+
+这里的“同步/异步”可以分成三种实际入口：
+
+```text
+入口 A：防抖队列的后台 Timer 线程
+  MemoryUpdateQueue._process_queue
+  -> MemoryUpdater.update_memory
+  -> 当前线程不是 asyncio 事件循环
+  -> 直接执行 _do_update_memory_sync
+  -> model.invoke 阻塞的是 Timer 后台线程
+  -> 原始用户请求已经结束，不被这次等待占用
+
+入口 B：同步函数在已有事件循环中调用 update_memory
+  async LangGraph / FastAPI 调用栈中误调用 update_memory
+  -> update_memory 检测到 loop.is_running()
+  -> 提交到 _SYNC_MEMORY_UPDATER_EXECUTOR
+  -> 工作线程执行 _do_update_memory_sync + model.invoke
+  -> 调用方等待 future.result()
+  -> 好处是同步 HTTP 连接池不碰 async httpx 连接池
+  -> 代价是这个同步调用方仍然要等结果返回
+
+入口 C：异步代码显式调用 aupdate_memory
+  await MemoryUpdater().aupdate_memory(...)
+  -> asyncio.to_thread(_do_update_memory_sync)
+  -> 工作线程执行 model.invoke
+  -> 当前事件循环可在 await 期间调度其他任务
+  -> 返回后再继续解析、合并、保存结果
+```
+
+具体来说，DeerFlow 的常规学习链路走入口 A：Agent 完成后只把筛选消息放入
+`MemoryUpdateQueue`，真正 LLM 更新在稍后的 Timer 后台线程中执行。因此用户本轮
+响应不会等待记忆 LLM。入口 B 和入口 C 主要用于测试、管理脚本或未来其他模块
+直接调用 `MemoryUpdater` 的场景。
 
 LLM 必须输出以下结构：
 
@@ -1074,6 +1185,91 @@ research-analyst
 
 读取注入时也使用相同的 `user_id + agent_name` 组合，因此写入隔离和后续读取隔离
 保持一致。
+
+### 7.14 记忆更新的同步与异步执行路径
+
+#### 7.14.1 常规用户对话：后台 Timer 线程更新
+
+这是线上最常见的路径。用户本轮请求完成后，记忆学习只是入队，不会让用户等待
+记忆 LLM：
+
+```text
+10:00:00 Alice 发起请求
+  -> DynamicContextMiddleware.before_agent 注入日期和可用记忆
+  -> Lead Agent 生成回复
+  -> MemoryMiddleware.after_agent 筛选消息并 queue.add(...)
+  -> 本轮响应返回给 Alice
+
+10:00:30 Timer 到期
+  -> MemoryUpdateQueue._process_queue 在线程 Timer-1 中运行
+  -> MemoryUpdater.update_memory(...)
+  -> 当前不是 asyncio 事件循环
+  -> _do_update_memory_sync(...)
+  -> model.invoke(...) 同步等待记忆 LLM
+  -> _finalize_update 解析、合并、FileMemoryStorage.save
+```
+
+这个场景中，“同步”指 `model.invoke()` 是阻塞调用；但它阻塞的是后台 Timer
+线程，不是已经返回响应的用户请求线程，也不是 FastAPI/LangGraph 的事件循环。
+
+#### 7.14.2 事件循环中误用同步入口：转移到专用线程池
+
+如果某个异步函数里直接调用 `update_memory()`，当前线程通常已经有正在运行的
+事件循环。实现会把真正的同步 LLM 调用转移到专用线程池：
+
+```python
+async def some_async_handler(messages):
+    ok = MemoryUpdater().update_memory(messages, thread_id="thread-a")
+    return ok
+```
+
+实际执行：
+
+```text
+some_async_handler 所在线程存在 running event loop
+-> update_memory 检测到 loop.is_running()
+-> _SYNC_MEMORY_UPDATER_EXECUTOR.submit(_do_update_memory_sync, ...)
+-> memory-updater-sync 工作线程执行 model.invoke
+-> some_async_handler 等待 future.result()
+-> 返回 true / false
+```
+
+这样做的重点不是让调用方完全不等待，而是避免在事件循环线程里直接跑阻塞 I/O，
+同时避免复用 LangChain provider 的异步 HTTP 连接池。同步调用方仍然会等结果；
+如果希望事件循环在等待期间继续调度其他任务，应使用 `aupdate_memory()`。
+
+#### 7.14.3 显式异步入口：`aupdate_memory()`
+
+异步代码可以显式 `await`：
+
+```python
+async def some_async_handler(messages):
+    ok = await MemoryUpdater().aupdate_memory(messages, thread_id="thread-a")
+    return ok
+```
+
+实际执行：
+
+```text
+some_async_handler
+-> await aupdate_memory(...)
+-> asyncio.to_thread(_do_update_memory_sync, ...)
+-> 工作线程执行同步 model.invoke
+-> event loop 在 await 期间可以继续处理其他协程
+-> 工作线程返回后，当前协程恢复并拿到 true / false
+```
+
+这个路径适合异步测试、管理接口或未来直接在异步模块中触发记忆更新的场景。当前
+常规 Agent 学习路径已经由防抖队列放到后台 Timer 线程中，不需要再额外调用
+`aupdate_memory()`。
+
+#### 7.14.4 为什么不直接使用异步 LLM 调用
+
+当前实现刻意让记忆更新统一走同步 `model.invoke()`。原因是 DeerFlow 主 Agent
+本身运行在异步图执行环境中，部分 LangChain provider 会缓存异步 HTTP client 或
+连接池。如果记忆更新在另一个事件循环中使用异步 LLM 调用，可能触发跨事件循环
+复用异步连接池的问题。统一使用同步调用并放到普通工作线程，可以把记忆更新的
+HTTP 连接池与主 Agent 的异步连接池隔离开。
 
 ## 8. 配置参考
 

@@ -228,8 +228,35 @@ def test_task_tool_inherits_only_approved_mmkb_runtime_values(monkeypatch):
     assert output == "Task Succeeded. Result: done"
     assert captured["executor_kwargs"]["inherited_configurable"] == {
         "mmkb_bearer_token": "Bearer workspace:key",
+        "public_base_url": "https://mmkb.example",
     }
     assert captured["executor_kwargs"]["inherited_context"] == {
+        "public_base_url": "https://mmkb.example",
+        "mmkb_workspace_id": "workspace",
+        "mmkb_user_id": "user",
+        "mmkb_tenant_id": "tenant",
+    }
+
+
+def test_task_tool_inherits_mmkb_context_values_from_configurable_fallback():
+    runtime = _make_runtime()
+    runtime.config["configurable"] = {
+        "mmkb_bearer_token": "Bearer workspace:key",
+        "public_base_url": "https://mmkb.example",
+        "mmkb_workspace_id": "workspace",
+        "mmkb_user_id": "user",
+        "mmkb_tenant_id": "tenant",
+        "unrelated_secret": "do-not-copy",
+    }
+    runtime.context["unrelated_context"] = "do-not-copy"
+
+    inherited_configurable, inherited_context = task_tool_module._get_subagent_runtime_values(runtime)
+
+    assert inherited_configurable == {
+        "mmkb_bearer_token": "Bearer workspace:key",
+        "public_base_url": "https://mmkb.example",
+    }
+    assert inherited_context == {
         "public_base_url": "https://mmkb.example",
         "mmkb_workspace_id": "workspace",
         "mmkb_user_id": "user",

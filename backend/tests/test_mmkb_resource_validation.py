@@ -19,6 +19,7 @@ PROTECTED_URL = (
     "00000000-0000-0000-0000-000000000001/media/markdown/md_images/page0001.jpg"
 )
 DOCUMENT_URL = "http://ocrdev.tentcoo.com/documents/859b3373-a899-43bc-8c3d-669daabf70b2"
+API_DOCUMENT_DETAIL_URL = "http://ocrdev.tentcoo.com/api/documents/859b3373-a899-43bc-8c3d-669daabf70b2"
 
 
 def test_validate_mmkb_resource_urls_accepts_structurally_complete_signed_url():
@@ -44,6 +45,22 @@ def test_validate_mmkb_resource_urls_detects_truncated_and_protected_urls():
     assert stats.has_failures is True
 
 
+def test_validate_mmkb_resource_urls_ignores_structured_md_asset_base_metadata():
+    stats = validate_mmkb_resource_urls(
+        {
+            "md_asset_base": (
+                "http://ocrdev.tentcoo.com/api/documents/"
+                "859b3373-a899-43bc-8c3d-669daabf70b2/media/markdown/"
+            ),
+            "image_url": PROTECTED_URL,
+        },
+    )
+
+    assert stats.protected_unsigned == 1
+    assert stats.resource_urls == 1
+    assert stats.has_failures is True
+
+
 def test_validate_mmkb_resource_urls_tracks_document_page_origin_and_session_requirement():
     stats = validate_mmkb_resource_urls(f"{DOCUMENT_URL}、", expected_base_url="http://ocrdev.tentcoo.com")
 
@@ -66,6 +83,18 @@ def test_validate_mmkb_resource_urls_detects_document_page_origin_and_shape_fail
     assert stats.structurally_valid_document_pages == 1
     assert stats.malformed_document_pages == 1
     assert stats.unexpected_document_origins == 1
+    assert stats.has_failures is True
+
+
+def test_validate_mmkb_resource_urls_detects_api_document_detail_url():
+    stats = validate_mmkb_resource_urls(
+        f"[source]({API_DOCUMENT_DETAIL_URL})",
+        expected_base_url="http://ocrdev.tentcoo.com",
+    )
+
+    assert stats.resource_urls == 1
+    assert stats.document_page_urls == 0
+    assert stats.api_document_detail_urls == 1
     assert stats.has_failures is True
 
 

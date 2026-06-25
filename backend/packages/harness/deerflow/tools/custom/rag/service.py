@@ -26,6 +26,8 @@ class MMKBService:
         tool_name: str,
         client: MMKBClient,
         public_base_url: str,
+        public_base_url_source: str = "",
+        public_base_url_fallback_used: bool = False,
         thread_id: str = "",
         run_id: str = "",
     ) -> None:
@@ -38,6 +40,10 @@ class MMKBService:
                 "tool": tool_name,
                 "thread_id": thread_id,
                 "run_id": run_id,
+                "public_base_url_source": public_base_url_source,
+                "public_base_url_fallback_used": str(public_base_url_fallback_used).lower()
+                if public_base_url_source
+                else "",
             }.items()
             if value
         }
@@ -57,19 +63,30 @@ class MMKBService:
         return self._process(lambda: self._client.search(query=query, mode=mode, limit=limit))
 
     def get_document(self, *, document_id: str) -> Any:
-        return self._process(lambda: self._client.get_document(document_id=document_id))
+        return self._process(lambda: _with_document_page_url(self._client.get_document(document_id=document_id), document_id))
 
     def get_document_preview(self, *, document_id: str) -> Any:
-        return self._process(lambda: self._client.get_document_preview(document_id=document_id))
+        return self._process(lambda: _with_document_page_url(self._client.get_document_preview(document_id=document_id), document_id))
 
     def get_document_chunks(self, *, document_id: str) -> Any:
-        return self._process(lambda: self._client.get_document_chunks(document_id=document_id))
+        return self._process(lambda: _with_document_page_url(self._client.get_document_chunks(document_id=document_id), document_id))
 
     def get_document_assets(self, *, document_id: str) -> Any:
-        return self._process(lambda: self._client.get_document_assets(document_id=document_id))
+        return self._process(lambda: _with_document_page_url(self._client.get_document_assets(document_id=document_id), document_id))
 
     def list_collections(self) -> Any:
         return self._process(self._client.list_collections)
+
+
+def _with_document_page_url(data: Any, document_id: str) -> Any:
+    """Expose the human document page URL on MMKB API document-detail responses."""
+
+    if not isinstance(data, dict) or data.get("document_url"):
+        return data
+    resolved_document_id = str(data.get("id") or document_id or "").strip()
+    if not resolved_document_id:
+        return data
+    return {**data, "document_url": f"/documents/{resolved_document_id}"}
 
 
 def build_mmkb_service(tool_name: str, config: RunnableConfig | None = None) -> MMKBService:
@@ -84,6 +101,8 @@ def build_mmkb_service(tool_name: str, config: RunnableConfig | None = None) -> 
         tool_name=tool_name,
         client=client,
         public_base_url=runtime.public_base_url,
+        public_base_url_source=runtime.public_base_url_source,
+        public_base_url_fallback_used=runtime.public_base_url_fallback_used,
         thread_id=runtime.thread_id,
         run_id=runtime.run_id,
     )
@@ -107,8 +126,12 @@ def fetch_mmkb_response(
             headers=runtime.headers,
         )
         resolved_public_base_url = runtime.public_base_url
+        public_base_url_source = runtime.public_base_url_source
+        public_base_url_fallback_used = runtime.public_base_url_fallback_used
     else:
         resolved_public_base_url = str(public_base_url or "").rstrip("/")
+        public_base_url_source = "explicit" if resolved_public_base_url else ""
+        public_base_url_fallback_used = False
 
     data = client.get(path, params=params)
     processed, link_stats = process_mmkb_response_links(data, resolved_public_base_url)
@@ -122,6 +145,8 @@ def fetch_mmkb_response(
             "tool": tool_name,
             "thread_id": str(configurable.get("thread_id") or context.get("thread_id") or "").strip(),
             "run_id": str(configurable.get("run_id") or context.get("run_id") or "").strip(),
+            "public_base_url_source": public_base_url_source,
+            "public_base_url_fallback_used": str(public_base_url_fallback_used).lower() if public_base_url_source else "",
         }.items()
         if value
     }

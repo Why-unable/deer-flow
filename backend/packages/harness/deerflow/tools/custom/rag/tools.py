@@ -28,31 +28,101 @@ def _json(data: Any) -> str:
 
 
 _PREVIEW_RAW_IMAGE_PATTERN = re.compile(
-    r"!\[[^\]\n]*\]\("
-    r"[^)\n]*(?:md_images/|/api/documents/[^)\n]*/media/|documents/[^)\n]*/markdown/)[^)\n]*"
-    r"\)(?:\s*<!--IMG_META:.*?-->)?",
+    r"!\[(?P<alt>[^\]\n]*)\]\("
+    r"(?P<src>[^)\n]*(?:md_images/|/api/documents/[^)\n]*/media/|documents/[^)\n]*/markdown/)[^)\n]*)"
+    r"\)(?:\s*<!--IMG_META:(?P<meta>.*?)-->)?",
     re.DOTALL,
 )
 _PREVIEW_IMAGE_META_PATTERN = re.compile(r"<!--IMG_META:.*?-->", re.DOTALL)
+_PREVIEW_PATH_TOKEN_PATTERN = re.compile(
+    r"https?://[^\s)\]]+|"
+    r"(?<!\S)/(?:api/documents|home|mnt|var|tmp|documents)/[^\s)\]]+|"
+    r"(?<!\S)(?:md_images|documents)/[^\s)\]]+|"
+    r"(?<!\S)[^\s)\]]+\.(?:png|jpe?g|gif|webp|bmp|tiff?)(?!\S)",
+    re.IGNORECASE,
+)
 _PREVIEW_IMAGE_PLACEHOLDER = (
     "[图片链接已省略：preview 不提供可展示图片 URL；"
     "需要展示图片请调用 rag_get_document_assets 或 rag_get_document_asset，"
     "并逐字复制返回的 image_url。]"
 )
+_PREVIEW_IMAGE_LINK_NOTE = "图片链接已省略，展示图片请调用 rag_get_document_asset。"
+_PREVIEW_IMAGE_TEXT_MAX_CHARS = 600
 
 
-def _sanitize_preview_text(text: str) -> tuple[str, int, int]:
-    """Remove raw markdown image references that are not user-visible URLs."""
+def _compact_preview_fragment(value: Any, *, max_chars: int = _PREVIEW_IMAGE_TEXT_MAX_CHARS) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text:
+        return ""
+    text = _PREVIEW_PATH_TOKEN_PATTERN.sub("[路径已省略]", text)
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1].rstrip() + "…"
+
+
+def _format_preview_image_description(alt_text: str, meta_json: str | None) -> tuple[str, bool]:
+    """Return a path-free plain-text image note extracted from safe metadata."""
+    parts: list[str] = []
+    alt = _compact_preview_fragment(alt_text, max_chars=160)
+    if alt:
+        parts.append(f"alt={alt}")
+
+    meta: dict[str, Any] = {}
+    if meta_json:
+        try:
+            parsed = json.loads(meta_json)
+        except (TypeError, ValueError):
+            parsed = {}
+        if isinstance(parsed, dict):
+            meta = parsed
+
+    for key, label in (("page_id", "page"), ("block_id", "block"), ("asset_type", "type")):
+        value = _compact_preview_fragment(meta.get(key), max_chars=80)
+        if value:
+            parts.append(f"{label}={value}")
+
+    ocr = meta.get("ocr")
+    if isinstance(ocr, dict):
+        ocr_text = _compact_preview_fragment(ocr.get("content"))
+        if ocr_text:
+            parts.append(f"OCR={ocr_text}")
+
+    orphan_text = meta.get("orphan_text")
+    if isinstance(orphan_text, list):
+        orphan_parts = []
+        for item in orphan_text:
+            if isinstance(item, dict):
+                content = item.get("content")
+            else:
+                content = item
+            content_text = _compact_preview_fragment(content, max_chars=200)
+            if content_text:
+                orphan_parts.append(content_text)
+        orphan_summary = _compact_preview_fragment("；".join(orphan_parts))
+        if orphan_summary:
+            parts.append(f"关联文字={orphan_summary}")
+
+    if not parts:
+        return _PREVIEW_IMAGE_PLACEHOLDER, False
+    return f"[图片说明：{'；'.join(parts)}。{_PREVIEW_IMAGE_LINK_NOTE}]", True
+
+
+def _sanitize_preview_text(text: str) -> tuple[str, int, int, int]:
+    """Remove raw image paths while retaining safe plain-text image context."""
     image_links_removed = 0
+    image_descriptions_preserved = 0
 
-    def replace_raw_image(_match: re.Match[str]) -> str:
-        nonlocal image_links_removed
+    def replace_raw_image(match: re.Match[str]) -> str:
+        nonlocal image_descriptions_preserved, image_links_removed
         image_links_removed += 1
-        return _PREVIEW_IMAGE_PLACEHOLDER
+        replacement, preserved = _format_preview_image_description(match.group("alt"), match.group("meta"))
+        if preserved:
+            image_descriptions_preserved += 1
+        return replacement
 
     sanitized = _PREVIEW_RAW_IMAGE_PATTERN.sub(replace_raw_image, text)
     sanitized, image_metadata_removed = _PREVIEW_IMAGE_META_PATTERN.subn("", sanitized)
-    return sanitized, image_links_removed, image_metadata_removed
+    return sanitized, image_links_removed, image_metadata_removed, image_descriptions_preserved
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -203,6 +273,9 @@ def rag_get_document_tool(
     paths are MMKB API metadata and are not mounted inside the DeerFlow sandbox;
     do not use `read_file`, `grep`, or `bash` on them.
 
+    Difference from `rag_get_document_preview`: this returns metadata and
+    generated path/URL fields only. It does not read the merged markdown body.
+
     Args:
         document_id: UUID of the local knowledge-base document.
     """
@@ -217,33 +290,56 @@ def rag_get_document_tool(
 def rag_get_document_preview_tool(
     document_id: Annotated[str, "UUID of the local knowledge-base document."],
     max_chars: Annotated[int, "Maximum preview characters to return (1000-50000)."] = 12000,
+    start_char: Annotated[int, "Zero-based character offset in sanitized preview text."] = 0,
     config: Annotated[RunnableConfig, InjectedToolArg] = None,
 ) -> str:
     """Get a truncated merged-markdown preview for one document.
 
     Use this when search results identify a relevant document and you need
     broader surrounding context than the retrieved chunks provide. This reads the
-    document's merged markdown output and truncates it client-side to avoid
+    document's merged markdown output and returns a bounded text window to avoid
     overloading the model context.
 
     Returns JSON with:
     - `document_id`
-    - `preview_text`: merged markdown content, possibly truncated. Raw markdown
-      image references such as `md_images/...`, protected
-      `/api/documents/<id>/media/...`, and `IMG_META` comments are omitted so
-      they cannot be copied into user-visible output.
-    - `truncated`: whether `preview_text` was shortened
-    - `total_chars`: original preview length before truncation
+    - `preview_text`: merged markdown content window, possibly partial. Raw
+      markdown image references such as `md_images/...`, protected
+      `/api/documents/<id>/media/...`, and `IMG_META` comments are not copied
+      into user-visible output. Safe image context from alt text and whitelisted
+      `IMG_META` fields may be retained as path-free plain text.
+    - `start_char`, `end_char`, `returned_chars`: returned window boundaries in
+      sanitized preview text characters.
+    - `has_before`, `has_after`: whether content exists before or after this
+      returned window.
+    - `truncated`: whether `preview_text` is not the full sanitized preview.
+    - `total_chars`: sanitized preview length before windowing.
     - `preview_image_links_removed`: number of raw markdown image links omitted,
       present only when non-zero.
+    - `preview_image_descriptions_preserved`: number of image links whose safe
+      alt/OCR metadata was preserved as plain text, present only when non-zero.
 
     If you need concrete image URLs and OCR/caption metadata, call
     `rag_get_document_assets` or `rag_get_document_asset` for the same document
     and copy the returned `image_url` unchanged.
 
+    If `truncated` is true, the preview is partial. If the returned preview is
+    not enough to understand the document overview, such as an incomplete table
+    of contents, section structure, or opening context, call this tool again
+    with a larger `max_chars` or with `start_char=end_char` to read the next
+    preview window without repeating earlier text. For reliable coverage of
+    later sections, methods, experiments, results, limitations, or other
+    complete-document claims, prefer `rag_get_document_chunks` or targeted
+    `rag_search`. If you answer from a partial preview alone, state that the
+    evidence is limited to the returned preview window.
+
     Args:
         document_id: UUID of the local knowledge-base document.
         max_chars: Maximum preview characters to return, clamped to 1000-50000.
+            Increase this only when a broader overview window is needed; use
+            chunks for reliable later-section or whole-document evidence.
+        start_char: Zero-based character offset in sanitized preview text.
+            Use the previous response's `end_char` to continue reading the next
+            preview window without repeating earlier text.
     """
     document_id = str(document_id or "").strip()
     if not document_id:
@@ -254,25 +350,35 @@ def rag_get_document_preview_tool(
         return _json(data)
 
     text = str(data.get("preview_text") or "")
-    text, image_links_removed, image_metadata_removed = _sanitize_preview_text(text)
+    text, image_links_removed, image_metadata_removed, image_descriptions_preserved = _sanitize_preview_text(text)
     data = {**data, "preview_text": text}
     if image_links_removed:
         data["preview_image_links_removed"] = image_links_removed
     if image_metadata_removed:
         data["preview_image_metadata_removed"] = image_metadata_removed
+    if image_descriptions_preserved:
+        data["preview_image_descriptions_preserved"] = image_descriptions_preserved
     if image_links_removed or image_metadata_removed:
         data["media_safety_note"] = (
-            "preview_text omits raw markdown image links and IMG_META comments; "
-            "use rag_get_document_assets/rag_get_document_asset for signed image_url."
+            "preview_text omits raw markdown image links and raw IMG_META comments; "
+            "safe image descriptions may be retained as path-free plain text. "
+            "Use rag_get_document_assets/rag_get_document_asset for signed image_url."
         )
     max_chars = max(min(int(max_chars), 50000), 1000)
-    if len(text) > max_chars:
-        data["preview_text"] = text[:max_chars]
-        data["truncated"] = True
-        data["total_chars"] = len(text)
-    else:
-        data["truncated"] = False
-        data["total_chars"] = len(text)
+    start_char = max(int(start_char), 0)
+    total_chars = len(text)
+    window_start = min(start_char, total_chars)
+    window_end = min(window_start + max_chars, total_chars)
+    window_text = text[window_start:window_end]
+    data["preview_text"] = window_text
+    data["start_char"] = window_start
+    data["end_char"] = window_end
+    data["returned_chars"] = len(window_text)
+    data["total_chars"] = total_chars
+    data["has_before"] = window_start > 0
+    data["has_after"] = window_end < total_chars
+    data["truncated"] = data["has_before"] or data["has_after"]
+    data["offset_unit"] = "sanitized_preview_text_chars"
     return _json(data)
 
 

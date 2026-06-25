@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,6 +11,15 @@ URL_KEY_SUFFIXES = ("_url", "_path", "_base")
 PROTECTED_DOCUMENT_MEDIA_MARKER = "/api/documents/"
 PROTECTED_DOCUMENT_MEDIA_SUFFIX = "/media/"
 SIGNED_DOCUMENT_MEDIA_MARKER = "/api/document-media/"
+PROTECTED_MEDIA_METADATA_KEYS = {"md_asset_base"}
+_API_DOCUMENT_DETAIL_RE = re.compile(
+    r"^(?P<prefix>(?:https?://[^/?#]+)?)/api/documents/"
+    r"(?P<document_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})/?$"
+)
+_DOCUMENT_PAGE_RE = re.compile(
+    r"^(?P<prefix>(?:https?://[^/?#]+)?)/documents/"
+    r"(?P<document_id>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})/?$"
+)
 
 
 @dataclass
@@ -43,6 +53,13 @@ def process_mmkb_response_links(value: Any, base_url: str) -> tuple[Any, MmkbLin
     stats = MmkbLinkProcessingStats()
     normalized_base_url = str(base_url or "").rstrip("/")
 
+    def _canonical_document_url(field_value: str) -> str:
+        match = _API_DOCUMENT_DETAIL_RE.fullmatch(field_value) or _DOCUMENT_PAGE_RE.fullmatch(field_value)
+        if match is None:
+            return field_value
+        prefix = normalized_base_url or match.group("prefix")
+        return f"{prefix}/documents/{match.group('document_id')}"
+
     def _process(item: Any) -> Any:
         if isinstance(item, dict):
             return {key: _process_field(key, field_value) for key, field_value in item.items()}
@@ -56,13 +73,20 @@ def process_mmkb_response_links(value: Any, base_url: str) -> tuple[Any, MmkbLin
 
         stats.url_fields += 1
         result = field_value
-        if field_value.startswith("/"):
+        was_relative = field_value.startswith("/")
+        if key == "document_url":
+            result = _canonical_document_url(result)
+        if was_relative:
             stats.relative_fields += 1
-            if normalized_base_url:
-                result = f"{normalized_base_url}{field_value}"
+            if normalized_base_url and result.startswith("/"):
+                result = f"{normalized_base_url}{result}"
                 stats.absolutized_fields += 1
+            elif normalized_base_url and result.startswith(f"{normalized_base_url}/"):
+                stats.absolutized_fields += 1
+        elif key == "document_url":
+            result = _canonical_document_url(result)
 
-        if PROTECTED_DOCUMENT_MEDIA_MARKER in result and PROTECTED_DOCUMENT_MEDIA_SUFFIX in result:
+        if key not in PROTECTED_MEDIA_METADATA_KEYS and PROTECTED_DOCUMENT_MEDIA_MARKER in result and PROTECTED_DOCUMENT_MEDIA_SUFFIX in result:
             stats.protected_media_remaining += 1
         if SIGNED_DOCUMENT_MEDIA_MARKER in result:
             stats.signed_media_fields += 1

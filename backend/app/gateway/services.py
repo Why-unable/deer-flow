@@ -142,6 +142,12 @@ _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
 )
 
 
+def _safe_context_log_value(value: Any) -> str:
+    """Return one single-line value for context diagnostics."""
+
+    return sanitize_log_param(str(value or "").strip())[:200] or "-"
+
+
 def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, Any] | None) -> None:
     """Merge whitelisted keys from ``body.context`` into both ``config['configurable']``
     and ``config['context']`` so they are visible to legacy configurable readers and
@@ -157,6 +163,21 @@ def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, An
                 configurable.setdefault(key, context[key])
             if isinstance(runtime_context, dict):
                 runtime_context.setdefault(key, context[key])
+    thread_id = ""
+    if isinstance(configurable, dict):
+        thread_id = str(configurable.get("thread_id") or "")
+    logger.info(
+        "deerflow_run_context_merge thread_id=%s incoming_public_base_url_present=%s "
+        "incoming_public_base_url=%s configurable_public_base_url=%s context_public_base_url=%s "
+        "mmkb_workspace_present=%s mmkb_user_present=%s",
+        sanitize_log_param(thread_id) or "-",
+        str(bool(context.get("public_base_url"))).lower(),
+        _safe_context_log_value(context.get("public_base_url")),
+        _safe_context_log_value(configurable.get("public_base_url") if isinstance(configurable, dict) else ""),
+        _safe_context_log_value(runtime_context.get("public_base_url") if isinstance(runtime_context, dict) else ""),
+        str(bool(context.get("mmkb_workspace_id"))).lower(),
+        str(bool(context.get("mmkb_user_id"))).lower(),
+    )
 
 
 _SAFE_USER_ID_RE = re.compile(r"[^A-Za-z0-9_-]+")

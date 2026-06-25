@@ -130,6 +130,7 @@
         .resource-table td { color: #cbd5e1; }
         .resource-table .failure { color: #f87171; font-weight: 600; }
         .resource-table .healthy { color: #34d399; font-weight: 600; }
+        .resource-id { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; white-space: nowrap; color: #93c5fd; }
         .resource-note { color: #94a3b8; font-size: 0.75rem; margin-bottom: 12px; }
     </style>
 </head>
@@ -150,10 +151,10 @@
     </div>
     <div class="chart-container resource-panel">
         <div class="chart-header">
-            <span class="chart-title">MMKB 资源校验事件</span>
+            <span class="chart-title">MMKB 资源与上下文诊断事件</span>
         </div>
-        <p class="resource-note">文档页需要登录会话和匹配的当前 workspace；面板仅展示脱敏计数，不保存 URL、文档 ID 或 token。</p>
-        <div id="resourceEvents" class="no-data">暂无资源校验事件</div>
+        <p class="resource-note">文档页需要登录会话和匹配的当前 workspace；面板仅展示脱敏计数与公开 base URL 来源，不保存文档 ID、签名 token 或 bearer token。</p>
+        <div id="resourceEvents" class="no-data">暂无 MMKB 诊断事件</div>
     </div>
 
     <script>
@@ -218,6 +219,19 @@
         return String(value).replace(/[&<>"']/g, ch => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
         })[ch]);
+    }
+
+    function shortId(value) {
+        const text = String(value || '').trim();
+        if (!text || text === '-') return '-';
+        if (text.length <= 18) return text;
+        return `${text.slice(0, 10)}…${text.slice(-6)}`;
+    }
+
+    function idCell(value) {
+        const text = String(value || '').trim();
+        if (!text || text === '-') return '-';
+        return `<span class="resource-id" title="${escapeHtml(text)}">${escapeHtml(shortId(text))}</span>`;
     }
 
     function updateCards(snapshot) {
@@ -311,23 +325,38 @@
             const target = document.getElementById('resourceEvents');
             if (!events.length) {
                 target.className = 'no-data';
-                target.textContent = '暂无资源校验事件';
+                target.textContent = '暂无 MMKB 诊断事件';
                 return;
             }
             target.className = '';
             target.innerHTML = `<table class="resource-table">
-                <thead><tr><th>时间</th><th>层级 / 工具</th><th>状态</th><th>媒体异常</th><th>文档页</th><th>源站异常</th><th>会话依赖</th></tr></thead>
+                <thead><tr><th>时间</th><th>层级 / 工具</th><th>线程</th><th>运行</th><th>状态</th><th>公开地址来源</th><th>公开地址</th><th>媒体异常</th><th>文档页</th><th>源站异常</th><th>会话依赖</th></tr></thead>
                 <tbody>${events.map(item => {
                     const f = item.fields || {};
                     const mediaFailures = Number(f.malformed_signed || 0) + Number(f.protected_unsigned || 0);
-                    const documentFailures = Number(f.malformed_document_pages || 0);
+                    const apiDocumentDetails = Number(f.api_document_detail_urls || 0);
+                    const documentFailures = Number(f.malformed_document_pages || 0) + apiDocumentDetails;
                     const statusClass = item.has_failures ? 'failure' : 'healthy';
+                    let statusText = item.has_failures ? '异常' : '结构正常';
+                    if (item.event === 'mmkb_runtime_context') {
+                        statusText = f.fallback_used === 'true' ? 'Fallback' : '上下文正常';
+                    } else if (item.event === 'deerflow_run_context_merge') {
+                        statusText = item.has_failures ? '缺少公开地址' : '合并正常';
+                    }
+                    const publicSource = f.public_base_url_source || (f.incoming_public_base_url_present === 'true' ? 'incoming_context' : '-');
+                    const candidates = [f.public_base_url, f.context_public_base_url, f.incoming_public_base_url]
+                        .filter(value => value && value !== '-');
+                    const publicBaseUrl = candidates[0] || '-';
                     return `<tr>
                         <td>${escapeHtml(item.timestamp || '-')}</td>
                         <td>${escapeHtml(item.event)}${f.tool ? ` / ${escapeHtml(f.tool)}` : ''}</td>
-                        <td class="${statusClass}">${item.has_failures ? '异常' : '结构正常'}</td>
+                        <td>${idCell(f.thread_id)}</td>
+                        <td>${idCell(f.run_id)}</td>
+                        <td class="${statusClass}">${escapeHtml(statusText)}</td>
+                        <td>${escapeHtml(publicSource)}</td>
+                        <td>${escapeHtml(publicBaseUrl)}</td>
                         <td>${mediaFailures}</td>
-                        <td>${f.document_page_urls || 0}${documentFailures ? ` / 格式异常 ${documentFailures}` : ''}</td>
+                        <td>${f.document_page_urls || 0}${documentFailures ? ` / 格式异常 ${documentFailures}` : ''}${apiDocumentDetails ? ` / API端点 ${apiDocumentDetails}` : ''}</td>
                         <td>${f.unexpected_document_origins || 0}</td>
                         <td>${f.document_pages_require_session || 0}</td>
                     </tr>`;

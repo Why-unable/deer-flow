@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 
 def test_format_sse_basic():
@@ -367,6 +368,42 @@ def test_merge_run_context_overrides_propagates_to_runtime_context():
     assert config["context"]["is_bootstrap"] is True
     # Non-whitelisted keys are not forwarded.
     assert "thread_id" not in config["context"]
+
+
+def test_merge_run_context_overrides_logs_public_base_url(caplog):
+    from app.gateway.services import build_run_config, merge_run_context_overrides
+
+    config = build_run_config("thread-1", None, None)
+    with caplog.at_level(logging.INFO, logger="app.gateway.services"):
+        merge_run_context_overrides(
+            config,
+            {
+                "public_base_url": "https://mmkb.example/",
+                "mmkb_workspace_id": "workspace-1",
+                "mmkb_user_id": "user-1",
+            },
+        )
+
+    assert config["configurable"]["public_base_url"] == "https://mmkb.example/"
+    assert config["context"]["public_base_url"] == "https://mmkb.example/"
+    assert "deerflow_run_context_merge thread_id=thread-1" in caplog.text
+    assert "incoming_public_base_url_present=true" in caplog.text
+    assert "configurable_public_base_url=https://mmkb.example/" in caplog.text
+    assert "context_public_base_url=https://mmkb.example/" in caplog.text
+    assert "mmkb_workspace_present=true" in caplog.text
+
+
+def test_merge_run_context_overrides_logs_missing_public_base_url_for_mmkb(caplog):
+    from app.gateway.services import build_run_config, merge_run_context_overrides
+
+    config = build_run_config("thread-1", None, None)
+    with caplog.at_level(logging.INFO, logger="app.gateway.services"):
+        merge_run_context_overrides(config, {"mmkb_workspace_id": "workspace-1", "mmkb_user_id": "user-1"})
+
+    assert "deerflow_run_context_merge thread_id=thread-1" in caplog.text
+    assert "incoming_public_base_url_present=false" in caplog.text
+    assert "incoming_public_base_url=-" in caplog.text
+    assert "mmkb_workspace_present=true" in caplog.text
 
 
 def test_merge_run_context_overrides_noop_for_empty_context():
