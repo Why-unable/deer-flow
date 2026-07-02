@@ -132,9 +132,14 @@ Important Rules:
 - IMPORTANT: Do NOT record raw generated artifact paths or download links in
   memory. Paths like `/mnt/user-data/outputs/...` and URLs like
   `/api/agent/artifacts/...` or `/api/deerflow/artifacts/...` are
-  session/thread-scoped. If useful, remember only a non-clickable historical
-  note such as "a report named <filename> was generated previously"; do not
-  preserve a path or URL that could be reused in a future session.
+  session/thread-scoped. Generated artifact filenames are also session-scoped
+  interaction details, even when mentioned without a path (for example
+  `report-20260629.md` or `slides-final.pptx`). If useful, remember the
+  durable work product or outcome represented by the file, such as "the user
+  completed a comprehensive battery-field systematic review covering inclusion
+  criteria, cross-document synthesis, evidence matrices, and research gaps";
+  do not preserve generated filenames, paths, or URLs that could be mistaken
+  for current-session files in a future conversation.
 
 Return ONLY valid JSON, no explanation or markdown."""
 

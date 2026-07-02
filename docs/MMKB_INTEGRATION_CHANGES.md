@@ -54,9 +54,9 @@ Gateway 进程内存中。
 
 该配置只减少 run event 历史长期驻留在 Gateway 进程内存中的风险，不会自动
 取消仍在执行的 Agent run。当前 MMKB Agent 请求已经使用
-`stream_subgraphs=false` 限制子图消息流量，但仍使用
-`on_disconnect=continue`；如果 MMKB/客户端 SSE 中途断开，DeerFlow 后台 run
-仍可能继续执行。相关风险、取证方法和建议见
+`stream_subgraphs=false` 限制子图消息流量，并发送
+`on_disconnect=cancel`；如果 MMKB/客户端 SSE 中途断开，DeerFlow 会取消本轮
+后台 run，避免无客户端消费的孤立任务继续执行。相关风险、取证方法和建议见
 `docs/MMKB_AGENT_STORAGE_AND_OOM_TROUBLESHOOTING.md`。
 
 ## 鉴权与身份
@@ -595,8 +595,8 @@ SOUL 行为：
 重要 git 说明：
 
 - `config.yaml` 和 `extensions_config.json` 当前均已被 Git 跟踪；
-- 当前工作区中的 `config.yaml` 有未提交修改，`extensions_config.json`
-  当前无修改；二者都没有 staged 变更；
+- 不要把某次本地 `git status` 记录当作长期事实；合并或发布前应重新运行
+  `git status --short config.yaml extensions_config.json` 确认实际变更；
 - 是否提交到私有 fork 需要明确决定。如果提交，它们会成为可部署的
   MMKB 集成版 DeerFlow 状态的一部分。
 

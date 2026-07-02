@@ -10,6 +10,7 @@ persisting in long-term memory:
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from deerflow.agents.memory.message_processing import detect_correction, detect_reinforcement, filter_messages_for_memory
+from deerflow.agents.memory.prompt import MEMORY_UPDATE_PROMPT
 from deerflow.agents.memory.updater import _strip_upload_mentions_from_memory
 
 # ---------------------------------------------------------------------------
@@ -28,6 +29,12 @@ def _ai(text: str, tool_calls=None) -> AIMessage:
     if tool_calls:
         msg.tool_calls = tool_calls
     return msg
+
+
+def test_memory_update_prompt_avoids_generated_artifact_filenames():
+    assert "Generated artifact filenames are also session-scoped" in MEMORY_UPDATE_PROMPT
+    assert "durable work product or outcome represented by the file" in MEMORY_UPDATE_PROMPT
+    assert "do not preserve generated filenames" in MEMORY_UPDATE_PROMPT
 
 
 # ===========================================================================

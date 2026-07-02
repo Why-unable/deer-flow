@@ -269,7 +269,7 @@ MMKB 检查历史消息中是否存在上一轮隐藏的 `[agent-thread: ...]` m
 
 ```json
 {
-  "assistant_id": "lead_agent",
+  "assistant_id": "research-analyst",
   "input": {
     "messages": [
       {
@@ -280,7 +280,7 @@ MMKB 检查历史消息中是否存在上一轮隐藏的 `[agent-thread: ...]` m
   },
   "stream_mode": ["messages-tuple", "values", "custom"],
   "stream_subgraphs": false,
-  "on_disconnect": "continue",
+  "on_disconnect": "cancel",
   "context": {
     "thinking_enabled": true,
     "is_plan_mode": true,
@@ -306,7 +306,7 @@ OpenAI messages
 `backend/app/gateway/services.py::start_run`。`start_run` 依次执行：
 
 1. 从 `app.state` 获取 `RunManager`、`StreamBridge`、checkpointer 和 event store；
-2. 将 `"continue"` 转换为内部 `DisconnectMode.continue_`；
+2. 将 `"cancel"` 转换为内部 `DisconnectMode.cancel`；
 3. 创建 `RunRecord`，生成唯一 `run_id`；
 4. 在 `threads_meta` 中创建 thread 或把状态更新为 `running`；
 5. 将输入标准化为 LangGraph `graph_input`；
@@ -588,19 +588,19 @@ on_disconnect=cancel
 
 ## 已确认的风险点
 
-### 1. 断开连接后 DeerFlow run 默认继续
+### 1. 断开连接后 DeerFlow run 继续的风险已在 MMKB 调用侧收敛
 
 MMKB 当前发送给 DeerFlow 的 run 请求包含：
 
 ```python
-"on_disconnect": "continue"
+"on_disconnect": "cancel"
 ```
 
-该配置意味着 MMKB 与 DeerFlow 的 SSE 连接断开后，DeerFlow 不会取消 Agent
-run，而是允许其继续在后台执行，并丢弃后续流事件。
+该配置意味着 MMKB 与 DeerFlow 的 SSE 连接断开后，DeerFlow 会取消本轮
+Agent run，而不是允许其在后台继续执行并丢弃后续流事件。
 
-这个行为适合能够重新连接到 run 的 DeerFlow 自带前端，但不适合当前 MMKB
-OpenAI 兼容链路：
+此前的 `on_disconnect=continue` 适合能够重新连接到 run 的 DeerFlow 自带
+前端，但不适合当前 MMKB OpenAI 兼容链路：
 
 - Cherry Studio 不知道 DeerFlow `run_id`；
 - MMKB 当前没有重新订阅孤立 run 并继续转发结果的机制；
@@ -699,7 +699,7 @@ Gateway 的 `RunManager` 会在 `_runs` 字典中保存每个 run 的 `RunRecord
 | 风险 | 当前本地状态 | 仍需执行 |
 |---|---|---|
 | `MemoryRunEventStore` 无淘汰累积 | 已通过 `run_events.backend: db` 消除 | 确认公网配置并重启 Gateway |
-| SSE 断开后后台 run 继续 | 仍存在，MMKB 当前使用 `on_disconnect=continue` | 改为 `cancel` 并测试 |
+| SSE 断开后后台 run 继续 | 已在 MMKB 调用侧改为 `on_disconnect=cancel` | 主动断连验证 run 进入 `interrupted` |
 | StreamBridge 暂存大型 `values` | 仍存在 | 压测后减少不必要的全状态事件 |
 | 已完成 `RunRecord` 累积 | 仍存在，清理函数没有调用点 | 实施并验证完成记录清理 |
 | 多 worker 放大基础内存和并发 | 生产默认仍为 4 | 低内存环境先设为 1 |
@@ -715,7 +715,7 @@ Gateway 的 `RunManager` 会在 `_runs` 字典中保存每个 run 的 `RunRecord
 - memory 更新任务；
 - run event 写入和运行收尾；
 - stream bridge 中暂存的大型状态事件；
-- SSE 断开后因 `on_disconnect=continue` 留下的孤立后台 run。
+- SSE 断开后是否仍有历史 `on_disconnect=continue` 请求留下的孤立后台 run。
 
 如果 Cherry Studio 或中间代理没有正确接收结束帧，还可能重复发送请求，进一步
 放大资源消耗。
@@ -724,7 +724,7 @@ Gateway 的 `RunManager` 会在 `_runs` 字典中保存每个 run 的 `RunRecord
 
 ### P0：连接断开时取消 DeerFlow run
 
-建议将 MMKB 发给 DeerFlow 的请求改为：
+当前 MMKB 发给 DeerFlow 的请求已改为：
 
 ```python
 "on_disconnect": "cancel"
@@ -736,8 +736,8 @@ Gateway 的 `RunManager` 会在 `_runs` 字典中保存每个 run 的 `RunRecord
 - 防止客户端已经无法接收结果时，Agent 和子 Agent 仍长期执行；
 - 减少孤立 run 导致的 CPU、内存和外部模型调用浪费。
 
-该修改会改变运行行为，需要补充断开连接和正常完成场景测试。它尚未在本文档
-创建时实施。
+该修改会改变运行行为；部署或合并后仍需要补充断开连接和正常完成场景测试，
+确认当前环境确实加载了 `on_disconnect=cancel`。
 
 ### P0：确认公网环境使用数据库保存 run events
 
@@ -909,7 +909,7 @@ grep 'POST /v1/chat/completions' <mmkb日志文件> | tail -50
 ```text
 SSE 未正常结束或中途断开
   -> MMKB/Cherry Studio 无法继续接收结果
-  -> on_disconnect=continue 让 DeerFlow 后台 run 继续
+  -> 历史 on_disconnect=continue 请求可能让 DeerFlow 后台 run 继续
   -> 高强度 Agent、子 Agent、状态快照或事件存储持续占用资源
   -> 低内存公网服务器最终触发系统级 OOM
 ```
@@ -917,7 +917,7 @@ SSE 未正常结束或中途断开
 但该路径仍需公网服务器的 OOM 日志和 run 状态确认。当前应优先完成：
 
 1. 确认公网实际加载 `run_events.backend: db`，并监控 SQLite 或 PostgreSQL 增长；
-2. 实施并验证 `on_disconnect: cancel`；
+2. 验证 `on_disconnect: cancel` 已在当前 MMKB 调用侧生效；
 3. 为完成、失败和取消的 run 调用 `RunManager` 清理；
 4. 将低内存服务器设置为 `GATEWAY_WORKERS=1`，并设置容器内存边界；
 5. 再根据压测结果决定是否降低默认 Ultra 强度和减少 `values` 状态流。
