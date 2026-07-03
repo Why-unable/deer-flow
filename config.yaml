@@ -51,6 +51,48 @@ models:
     supports_thinking: false
     supports_vision: false
 
+  - name: doubao-seed-1-6-250615
+    display_name: Doubao Seed 1.6
+    use: langchain_openai:ChatOpenAI
+    model: doubao-seed-1-6-250615
+    api_key: $MULTIMODAL_EMBED_API_KEY
+    base_url: https://ark.cn-beijing.volces.com/api/v3
+    request_timeout: 600.0
+    max_retries: 2
+    max_tokens: 4096
+    temperature: 0.7
+    supports_thinking: true
+    supports_vision: true
+    when_thinking_enabled:
+      extra_body:
+        thinking:
+          type: enabled
+    when_thinking_disabled:
+      extra_body:
+        thinking:
+          type: disabled
+
+  - name: doubao-seed-2-0-pro-260215
+    display_name: Doubao Seed 2.0 Pro
+    use: langchain_openai:ChatOpenAI
+    model: doubao-seed-2-0-pro-260215
+    api_key: $MULTIMODAL_EMBED_API_KEY
+    base_url: https://ark.cn-beijing.volces.com/api/v3
+    request_timeout: 600.0
+    max_retries: 2
+    max_tokens: 4096
+    temperature: 0.7
+    supports_thinking: true
+    supports_vision: false
+    when_thinking_enabled:
+      extra_body:
+        thinking:
+          type: enabled
+    when_thinking_disabled:
+      extra_body:
+        thinking:
+          type: disabled
+
   # Example: Volcengine (Doubao) model
   # - name: doubao-seed-1.8
   #   display_name: Doubao-Seed-1.8

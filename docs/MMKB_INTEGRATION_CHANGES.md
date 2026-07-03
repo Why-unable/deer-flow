@@ -369,7 +369,7 @@ event 以及 `task` 工具最终结果为准。
 
 ## DeerFlow Artifact 下载链接
 
-DeerFlow 生成的报告、PPT、表格等文件位于 thread sandbox 的：
+DeerFlow 生成的报告、表格、Markdown 等文件位于 thread sandbox 的：
 
 ```text
 /mnt/user-data/outputs/*
@@ -431,7 +431,6 @@ tool_groups:
 skills:
   - local-deep-research
   - local-systematic-literature-review
-  - ppt-generation
 ```
 
 SOUL 行为：
@@ -443,8 +442,7 @@ SOUL 行为：
 - 谨慎对待 OCR/caption 证据；
 - 区分本地证据、外部网页上下文和推断；
 - 对本地多文档综述、系统性文献综述、survey、annotated bibliography 或跨文档方法比较任务，使用 `local-systematic-literature-review`；
-- 对明确的 PPT/PPTX 生成请求，可使用公开版 `ppt-generation` skill，将结果写入 `/mnt/user-data/outputs/` 并通过 `present_files` 暴露为可下载 artifact；
-- 使用 `ppt-generation` 生成中间计划时，必须把完整 plan JSON 放进回答正文，不能只保存到当前 thread 的 workspace 文件；如果下一轮上下文里没有完整 plan JSON，只看到“已保存 plan 文件”之类文字，应要求用户重新粘贴 plan 或重新生成；
+- 当前暂不启用 PPT/PPTX 生成；用户要求制作演示文稿时，可先提供 Markdown 版汇报提纲、讲稿、页面结构或素材清单，但不承诺生成 PPT/PPTX 文件；
 - 面向 MMKB/OpenAI 兼容客户端的用户时，不引导用户直接上传到 DeerFlow、访问 `/mnt` 路径或到 `/mnt` 目录查找结果；需要用户提供知识库文档时，提示其先上传到当前 MMKB 工作区知识库并等待解析完成；
 - 上述规则只限制用户交互文案，不限制 Agent 和 Skill 内部使用 `/mnt/user-data/workspace/`、运行时实际存在的 `/mnt/user-data/uploads/` 和 `/mnt/user-data/outputs/`；最终产物仍写入 outputs 并通过 `present_files` 暴露；
 - 只有当研究任务能拆成独立维度时才使用 subagent；
@@ -584,7 +582,12 @@ SOUL 行为：
 
 `config.yaml` 是完整的本地 runtime 配置。与集成相关的部分包括：
 
-- model provider 使用 `CHAT_COMPLETION_API_KEY`；
+- model allowlist 包含 MMKB 网页端模型选择会传入的
+  `doubao-seed-1-6-250615`、`doubao-seed-2-0-pro-260215`；
+  Gateway 仍会拒绝不在
+  `config.yaml` `models:` 中的 `context.model_name`；
+- model provider 使用 `CHAT_COMPLETION_API_KEY` 或
+  `MULTIMODAL_EMBED_API_KEY`；
 - 自定义 MMKB RAG 工具注册到 `knowledge` group；
 - skills path 默认使用项目内 `skills/`；
 - sandbox/file/bash 工具是否可用由 agent config 决定。
@@ -814,7 +817,6 @@ git rm --cached .env
 | `backend/packages/harness/deerflow/agents/middlewares/memory_middleware.py` | 从 runtime context 解析 memory user id | 后台更新保持 workspace+user 隔离 |
 | `backend/packages/harness/deerflow/tools/builtins/task_tool.py` | 白名单提取父运行时的 MMKB 鉴权与身份上下文 | 子 Agent 的 RAG 工具继续使用同一 workspace 权限 |
 | `backend/packages/harness/deerflow/subagents/executor.py` | 将白名单运行时值合并进 delegated run | 避免子 Agent 调用 MMKB 时因 bearer 丢失而 `401` |
-| `skills/public/ppt-generation/SKILL.md` | 增加 MMKB/OpenWebUI 多轮计划规则 | plan JSON 必须回显到正文，避免依赖跨 thread 文件 |
 | `backend/packages/harness/deerflow/tools/custom/__init__.py` | custom tools package marker | MMKB tools import path |
 | `backend/packages/harness/deerflow/tools/custom/rag/__init__.py` | RAG tools package marker | MMKB tools import path |
 | `backend/packages/harness/deerflow/tools/custom/rag/context.py` | MMKB 工具静态设置和请求级身份上下文解析 | 集中处理 bearer、public URL、base URL 和 timeout |
@@ -830,7 +832,7 @@ git rm --cached .env
 | `backend/tests/test_mmkb_links.py` | MMKB 阶段 4 链接处理测试 | 保护绝对化、漏签检测和无敏感内容聚合日志 |
 | `backend/tests/test_mmkb_tools_contract.py` | 8 个工具的 service 委派与 schema 契约测试 | 防止重构或新增 transport 时改变公开工具行为 |
 | `backend/tests/test_custom_agent.py` | fallback 测试 | 保护共享 agent/用户级 memory 行为 |
-| `config.yaml` | 本地 runtime 配置 | 注册 MMKB tools 和模型配置，并将 run events 持久化到数据库以控制 Gateway 内存增长 |
+| `config.yaml` | 本地 runtime 配置 | 注册 MMKB tools，同步 MMKB 网页端可选模型 allowlist，并将 run events 持久化到数据库以控制 Gateway 内存增长 |
 | `docker/docker-compose-dev.yaml` | 移除空 token override | 保留 `.env` 中的内部 auth token |
 | `docs/deploy.md` | MMKB 集成版 DeerFlow 最简部署指南 | 说明 `.env`、内部认证检查和 Docker 启动步骤 |
 | `docs/MMKB_AGENT_OUTPUT_COMPARISON.md` | DeerFlow 前端与 MMKB Agent Mode 输出对比 | 记录事件转换、Artifact 和通用 OpenAI 客户端展示边界 |
