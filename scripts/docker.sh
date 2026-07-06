@@ -24,12 +24,13 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
     set +a
 fi
 
-# Sensible defaults for China/local restricted networks. Users can still
-# override any of these before running make, e.g. APT_MIRROR=...
-export APT_MIRROR="${APT_MIRROR:-mirrors.ustc.edu.cn}"
-export UV_INDEX_URL="${UV_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}"
+# Mirror defaults for China/local restricted networks. Keep these fixed for
+# the local deployment script so stale .env values do not switch builds back to
+# a slower or unreachable mirror.
+export APT_MIRROR=mirrors.tuna.tsinghua.edu.cn
+export UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 export UV_HTTP_TIMEOUT="${UV_HTTP_TIMEOUT:-120}"
-export NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
+export NPM_REGISTRY=https://registry.npmmirror.com
 export UV_IMAGE="${UV_IMAGE:-ghcr.io/astral-sh/uv:0.7.20}"
 
 detect_sandbox_mode() {
@@ -99,6 +100,19 @@ docker_available() {
     fi
 
     return 0
+}
+
+run_pre_start_checks() {
+    if [ "${DEER_FLOW_SKIP_PRE_START_CHECKS:-}" = "1" ]; then
+        echo -e "${YELLOW}Skipping pre-start checks because DEER_FLOW_SKIP_PRE_START_CHECKS=1${NC}"
+        echo ""
+        return 0
+    fi
+
+    echo -e "${BLUE}Running pre-start internal auth check...${NC}"
+    echo ""
+    DEER_FLOW_BASE_URL="" "$PROJECT_ROOT/scripts/check_deerflow_internal_auth.sh"
+    echo ""
 }
 
 # Initialize: pre-pull the sandbox image so first Pod startup is fast
@@ -236,6 +250,8 @@ start() {
             echo -e "${BLUE}Created empty extensions_config.json${NC}"
         fi
     fi
+
+    run_pre_start_checks
 
     echo "Building and starting containers..."
     cd "$DOCKER_DIR" && $COMPOSE_CMD up --build -d --remove-orphans $services

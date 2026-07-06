@@ -20,6 +20,21 @@ For MMKB-specific implementation details, use
 `docs/MMKB_INTEGRATION_CHANGES.md` as the source of truth. For user-visible RAG
 resource links, read `docs/MMKB_URL_LIFECYCLE.md`.
 
+For a complete map of the `docs/` directory, start with `docs/README.md`. It
+lists the purpose of each current document and gives reading order by task.
+High-frequency references:
+
+- `docs/deploy.md`: shortest MMKB-integrated Docker deployment flow.
+- `docs/MMKB_INTEGRATION_CHANGES.md`: source of truth for current MMKB-specific
+  DeerFlow changes.
+- `docs/MMKB_URL_LIFECYCLE.md`: RAG document/media/artifact URL lifecycle.
+- `docs/MMKB_AGENT_STORAGE_AND_OOM_TROUBLESHOOTING.md`: storage, long-running
+  SSE, and OOM investigation notes.
+- `docs/CONFIG_YAML_REFERENCE.md`: supported `config.yaml` fields and runtime
+  boundaries.
+- `docs/MEMORY_IMPLEMENTATION.md`: long-term memory data flow, storage, and
+  injection behavior.
+
 ## Scoped Guidance
 
 Read the closest scoped guidance before changing a directory:
@@ -64,6 +79,24 @@ make stop
 
 For backend-only commands and tests, read `backend/CLAUDE.md`. For frontend-only
 commands and tests, read `frontend/CLAUDE.md`.
+
+Docker development startup:
+
+```bash
+make docker-init
+make docker-start
+```
+
+`make docker-start` uses `scripts/docker.sh start`. That script sources the
+project-root `.env`, exports the local restricted-network mirrors
+`APT_MIRROR=mirrors.tuna.tsinghua.edu.cn`,
+`UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple`, and
+`NPM_REGISTRY=https://registry.npmmirror.com`, then runs
+`scripts/check_deerflow_internal_auth.sh` with `DEER_FLOW_BASE_URL=""` before
+building containers. The pre-start check validates that MMKB and DeerFlow
+`.env` files contain matching `DEER_FLOW_INTERNAL_AUTH_TOKEN` values without
+requiring DeerFlow to already be running. It may be skipped only for emergency
+local debugging with `DEER_FLOW_SKIP_PRE_START_CHECKS=1`.
 
 Start the optional monitor service explicitly:
 

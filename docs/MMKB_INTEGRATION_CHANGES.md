@@ -618,9 +618,14 @@ SOUL 行为：
 - 新增 `scripts/docker.sh restart-gateway`。
 - `scripts/docker.sh` 现在会在运行 Docker Compose 前 source 项目根目录 `.env`，
   让 compose 变量替换和 `env_file` 看到一致的值。
+- `scripts/docker.sh start` 会在构建/启动容器前运行
+  `scripts/check_deerflow_internal_auth.sh`，并设置 `DEER_FLOW_BASE_URL=""`
+  跳过尚未启动的 DeerFlow live check；若 MMKB 与 DeerFlow `.env` 的
+  `DEER_FLOW_INTERNAL_AUTH_TOKEN` 缺失或不一致，`make docker-start` 会直接失败。
+  紧急本地调试可设置 `DEER_FLOW_SKIP_PRE_START_CHECKS=1` 跳过。
 - 为本地/受限网络开发加入默认镜像源：
-  - `APT_MIRROR=mirrors.ustc.edu.cn`
-  - `UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple`
+  - `APT_MIRROR=mirrors.tuna.tsinghua.edu.cn`
+  - `UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple`
   - `UV_HTTP_TIMEOUT=120`
   - `NPM_REGISTRY=https://registry.npmmirror.com`
   - `UV_IMAGE=ghcr.io/astral-sh/uv:0.7.20`
@@ -631,8 +636,8 @@ SOUL 行为：
   `uv sync --all-packages`；compose 会把 `UV_INDEX_URL` 和
   `UV_HTTP_TIMEOUT` 同时注入运行中容器，避免镜像构建成功后 gateway
   仍因启动阶段依赖同步失败而未监听 8001，进而导致 nginx 返回 502。
-- Python 默认镜像使用阿里云 PyPI；部分云服务器无法连接 USTC PyPI
-  镜像时，可避免 gateway 构建在依赖索引请求阶段直接失败。
+- Python 默认镜像使用清华 PyPI；APT 默认使用清华 Debian 镜像，避免
+  gateway 构建在系统包或 Python 依赖索引请求阶段直接失败。
 - 从 gateway compose environment 中移除了显式的
   `DEER_FLOW_INTERNAL_AUTH_TOKEN=${...:-}`，避免它用空字符串覆盖
   `.env` / `env_file` 里的值。
