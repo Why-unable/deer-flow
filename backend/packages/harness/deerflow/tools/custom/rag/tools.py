@@ -132,7 +132,9 @@ def _sanitize_preview_text(text: str) -> tuple[str, int, int, int]:
 
 @tool("rag_list_documents", parse_docstring=True)
 def rag_list_documents_tool(
-    limit: Annotated[int, "Maximum number of ready documents to return, newest first (1-200)."],
+    limit: Annotated[int, "Maximum number of ready documents to return in this page, newest first (1-100)."] = 100,
+    offset: Annotated[int, "Zero-based page offset. Use next_offset to continue when has_more is true."] = 0,
+    collection_id: Annotated[int | None, "Optional MMKB collection ID used to restrict the listed documents."] = None,
     config: Annotated[RunnableConfig, InjectedToolArg] = None,
 ) -> str:
     """List indexed documents that are ready for local knowledge-base search.
@@ -148,15 +150,18 @@ def rag_list_documents_tool(
     - `items`: ready document rows ordered by `updated_at` descending.
     - `returned`: number of rows returned in this page.
     - `total_matched`: total ready documents matching the API-side filter.
+    - `offset`, `limit`, `has_more`, `next_offset`: pagination fields.
     - `status_filter`: always `ready` for this tool.
 
     Each item includes the document `id` needed by the other RAG tools, `title`,
-    `source_ext`, page/chunk progress fields, and output paths such as
-    `input_file_path`, `markdown_merged_path`, and `markdown_image_dir_path`.
+    `source_ext`, page/chunk progress fields, associated `collections`, and
+    output paths such as `input_file_path`, `markdown_merged_path`, and
+    `markdown_image_dir_path`.
     Relative URL/path fields are converted to absolute URLs when the caller
     provides a public base URL. These paths are MMKB API-side metadata, not
     sandbox-readable files. Do not pass them to `read_file`, `grep`, `bash`, or
     other sandbox tools; use the RAG tools below to read document content.
+    This tool intentionally does not return document body text or previews.
 
     Typical inventory/review workflow:
     1. Use `rag_list_documents` to discover candidate document IDs.
@@ -166,10 +171,25 @@ def rag_list_documents_tool(
        specific document.
 
     Args:
-        limit: Maximum number of ready documents to return, capped to 200.
+        limit: Maximum number of ready documents to return in this page, capped to 100.
+        offset: Zero-based page offset. Use the returned `next_offset` to continue.
+        collection_id: Optional MMKB collection ID used to restrict the listed documents.
     """
-    limit = max(min(int(limit), 200), 1)
-    data = _build_mmkb_service("rag_list_documents", config).list_documents(limit=limit)
+    limit = max(min(int(limit), 100), 1)
+    offset = max(int(offset), 0)
+    normalized_collection_id = None
+    if collection_id is not None:
+        try:
+            normalized_collection_id = int(collection_id)
+        except (TypeError, ValueError):
+            return _json({"error": "collection_id must be an integer"})
+        if normalized_collection_id <= 0:
+            return _json({"error": "collection_id must be positive"})
+    data = _build_mmkb_service("rag_list_documents", config).list_documents(
+        limit=limit,
+        offset=offset,
+        collection_id=normalized_collection_id,
+    )
     return _json(data)
 
 

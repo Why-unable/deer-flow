@@ -187,7 +187,7 @@ workspace 权限的文档详情页面。
 
 | 工具 | MMKB endpoint | 用途 |
 |---|---|---|
-| `rag_list_documents` | `GET /api/documents?status=ready&limit=N` | 发现 ready 状态文档 |
+| `rag_list_documents` | `GET /api/documents?status=ready&limit=N&offset=N&collection_id=N` | 分页发现 ready 状态文档 |
 | `rag_search` | `GET /api/search?q=&mode=&limit=` | 搜索文本 chunk 和视觉资产 |
 | `rag_get_document` | `GET /api/documents/<id>` | 读取单个文档元数据 |
 | `rag_get_document_preview` | `GET /api/documents/<id>/preview` | 读取合并 markdown 预览 |
@@ -203,6 +203,9 @@ workspace 权限的文档详情页面。
 - 工具选择描述区分主题检索与清单发现：普通本地知识主题查询默认从
   `rag_search` 开始；`rag_list_documents` 用于文档清单、范围发现和多文档综述
   候选池，不作为普通主题查询的固定前置步骤。
+- `rag_list_documents` 每页最多请求 100 条 ready 文档，支持 `offset` 翻页和
+  `collection_id` 过滤；返回文档标题、ID、更新时间、页数/chunk 数和 collection
+  元数据，不返回正文或 preview。
 - `context.py` 统一解析工具静态 `base_url/timeout/public_base_url_fallback` 与请求级
   `mmkb_bearer_token/public_base_url`。
 - `context.py` 每次构造 MMKB 工具运行上下文时输出
@@ -529,8 +532,9 @@ SOUL 行为：
 主要流程：
 
 1. 确认主题、文档范围、文档数量、输出格式和引用偏好；
-2. 使用 `rag_list_documents`、多轮 `rag_search` 和必要的
-   `rag_list_collections` 发现候选文档；
+2. 使用分页 `rag_list_documents`、多轮 `rag_search` 和必要的
+   `rag_list_collections` 发现候选文档；默认最多纳入 15 篇，候选超过 20 篇时
+   先让用户按主题、collection、时间或文档类型确认范围；
 3. 用明确的纳入/排除标准筛选候选文档，避免把 chunk 当作文档重复计数；
 4. 对纳入文档读取 `rag_get_document`、`rag_get_document_preview`；
    若 preview 返回 `truncated=true` 且该文档将支持全文级结论，补读

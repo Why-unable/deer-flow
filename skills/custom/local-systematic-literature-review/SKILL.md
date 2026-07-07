@@ -117,7 +117,7 @@ report_active_skill(skill_name="local-systematic-literature-review")
 开始检索前，确认以下信息。如果缺失且会影响结果，最多问一个澄清问题，不要一项一项追问。
 
 - **主题**：综述围绕什么主题或问题。
-- **文档范围**：默认最多纳入 10 篇/份文档；用户可指定数量，但建议不超过 20。
+- **文档范围**：默认最多纳入 15 篇/份文档；不是必须凑满 15 篇。用户可指定数量，但建议不超过 20。
 - **文档类型**：是否限定论文、标准、NIST 文档、报告、技术白皮书、某个 collection 等。
 - **输出形式**：默认 Markdown 报告；如果用户要求，可生成 annotated bibliography、证据矩阵、执行建议版综述等。
 - **引用偏好**：默认使用本地证据引用，不假装生成 APA/IEEE/BibTeX；只有当本地文档元数据足够支持时，才可附加类 APA/IEEE 参考列表。
@@ -126,13 +126,13 @@ report_active_skill(skill_name="local-systematic-literature-review")
 默认值：
 
 ```text
-文档数量：10
+文档数量：最多 15
 输出格式：Markdown
 引用方式：本地证据引用
 保存目录：/mnt/user-data/outputs/
 ```
 
-如果用户给出的范围过大，例如“综述全部文档”或“50 篇以上”，应说明本地综述质量会随文档数量下降，建议先按主题或 collection 拆分。
+如果用户给出的范围过大，例如“综述全部文档”或“50 篇以上”，应说明本地综述质量会随文档数量下降，建议先按主题、collection、时间范围或文档类型拆分。
 
 ### 阶段 1.5：研究计划产物
 
@@ -154,7 +154,7 @@ report_active_skill(skill_name="local-systematic-literature-review")
 
 推荐顺序：
 
-1. `rag_list_documents(limit=...)`：了解 ready 文档池。
+1. `rag_list_documents(limit=100, offset=0, collection_id=<optional>)`：了解 ready 文档池。该工具只返回轻量元数据和分页信息，不返回正文；当 `has_more=true` 时，可用 `next_offset` 继续翻页。
 2. `rag_search(query="<topic>", mode="hybrid", limit=10)`：获取主题相关 chunks/assets。
 3. 使用 2-5 个查询变体继续搜索：
    - 中文关键词；
@@ -162,7 +162,14 @@ report_active_skill(skill_name="local-systematic-literature-review")
    - 缩写和全称；
    - 具体方法名、框架名、标准名；
    - 用户提到的文档标题或领域词。
-4. 如用户提到集合、项目、文件夹、类别，调用 `rag_list_collections` 做范围确认。
+4. 如用户提到集合、项目、文件夹、类别，调用 `rag_list_collections` 做范围确认，并在后续 `rag_list_documents` 中传入对应 `collection_id`。
+
+大文档库处理规则：
+
+- 如果用户没有明确研究主题，且 `rag_list_documents` 显示 ready 文档超过 20 篇，不要直接开始完整综述。最多列出 20 篇候选标题、collection、更新时间和页数/chunk 数，询问用户要研究的主题、collection 或具体文档范围。
+- 如果用户已经给出明确主题，先使用 2-5 个 `rag_search` 查询变体发现相关文档；若候选文档超过 20 篇，列出最相关的 20 篇让用户确认范围。
+- 如果 `rag_search` 返回很多 chunk 但只涉及少量文档，应尝试同义词、缩写、中英文、标题关键词和 collection 范围补充候选。若仍然只找到少量相关文档，明确说明实际可检索到的相关文档数量，不要为达到默认上限而补造或硬凑文档。
+- `rag_list_documents` 的标题/collection 信息可辅助发现候选，但不替代正文阅读；进入纳入/排除和抽取阶段后，仍需使用 `rag_get_document_preview`、`rag_get_document_chunks` 或针对性 `rag_search`。
 
 查询原则：
 

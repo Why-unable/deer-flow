@@ -268,7 +268,10 @@ CORS is same-origin by default when requests enter through nginx on port 2026. S
 RAG tool-selection guidance separates topical retrieval from inventory work:
 ordinary local-knowledge questions use `rag_search` as the default entry point,
 while `rag_list_documents` is for document inventory, scope discovery, and
-candidate-pool construction for multi-document reviews. The
+candidate-pool construction for multi-document reviews. `rag_list_documents`
+is paginated (`limit` capped to 100, `offset`/`next_offset`) and can restrict
+inventory by `collection_id`; it returns document metadata rather than body
+preview text. The
 `local-deep-research` skill permits a lightweight single-search path when
 evidence is sufficient; `local-systematic-literature-review` retains the
 inventory-first workflow for explicitly multi-document synthesis.

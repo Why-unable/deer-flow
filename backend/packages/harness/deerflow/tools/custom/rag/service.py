@@ -56,8 +56,8 @@ class MMKBService:
         log_mmkb_resource_validation("mmkb_tool_resource_validation", validation_stats, **self._log_context)
         return processed
 
-    def list_documents(self, *, limit: int) -> Any:
-        return self._process(lambda: self._client.list_documents(limit=limit))
+    def list_documents(self, *, limit: int, offset: int = 0, collection_id: int | None = None) -> Any:
+        return self._process(lambda: self._client.list_documents(limit=limit, offset=offset, collection_id=collection_id))
 
     def search(self, *, query: str, mode: str, limit: int) -> Any:
         return self._process(lambda: self._client.search(query=query, mode=mode, limit=limit))

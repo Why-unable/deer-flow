@@ -8,7 +8,7 @@ import httpx
 class MMKBClient(Protocol):
     """Transport-neutral semantic interface for MMKB knowledge operations."""
 
-    def list_documents(self, *, limit: int) -> Any: ...
+    def list_documents(self, *, limit: int, offset: int = 0, collection_id: int | None = None) -> Any: ...
 
     def search(self, *, query: str, mode: str, limit: int) -> Any: ...
 
@@ -59,8 +59,11 @@ class HTTPMMKBClient:
         """Compatibility entrypoint for callers that still use a raw HTTP path."""
         return self._get(path, params=params)
 
-    def list_documents(self, *, limit: int) -> Any:
-        return self._get("/api/documents", params={"status": "ready", "limit": limit})
+    def list_documents(self, *, limit: int, offset: int = 0, collection_id: int | None = None) -> Any:
+        params: dict[str, Any] = {"status": "ready", "limit": limit, "offset": offset}
+        if collection_id is not None:
+            params["collection_id"] = collection_id
+        return self._get("/api/documents", params=params)
 
     def search(self, *, query: str, mode: str, limit: int) -> Any:
         return self._get("/api/search", params={"q": query, "mode": mode, "limit": limit})

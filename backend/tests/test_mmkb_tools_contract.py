@@ -11,8 +11,8 @@ class RecordingService:
     def __init__(self, calls: list[tuple]) -> None:
         self._calls = calls
 
-    def list_documents(self, *, limit: int):
-        self._calls.append(("list_documents", limit))
+    def list_documents(self, *, limit: int, offset: int = 0, collection_id: int | None = None):
+        self._calls.append(("list_documents", limit, offset, collection_id))
         return {"items": []}
 
     def search(self, *, query: str, mode: str, limit: int):
@@ -54,7 +54,7 @@ def test_all_rag_tools_delegate_to_semantic_service(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(rag_tools, "_build_mmkb_service", build_service)
 
-    json.loads(rag_tools.rag_list_documents_tool.func(20, config={}))
+    json.loads(rag_tools.rag_list_documents_tool.func(20, 100, 7, config={}))
     json.loads(rag_tools.rag_search_tool.func("nist", "hybrid", 5, config={}))
     json.loads(rag_tools.rag_get_document_tool.func("doc-1", config={}))
     json.loads(rag_tools.rag_get_document_preview_tool.func("doc-1", 12000, config={}))
@@ -74,7 +74,7 @@ def test_all_rag_tools_delegate_to_semantic_service(monkeypatch: pytest.MonkeyPa
         "rag_list_collections",
     ]
     assert calls == [
-        ("list_documents", 20),
+        ("list_documents", 20, 100, 7),
         ("search", "nist", "hybrid", 5),
         ("get_document", "doc-1"),
         ("get_document_preview", "doc-1"),
@@ -87,6 +87,11 @@ def test_all_rag_tools_delegate_to_semantic_service(monkeypatch: pytest.MonkeyPa
 
 
 def test_public_tool_schemas_remain_stable():
+    assert rag_tools.rag_list_documents_tool.args_schema.model_json_schema()["properties"].keys() == {
+        "limit",
+        "offset",
+        "collection_id",
+    }
     assert rag_tools.rag_search_tool.args_schema.model_json_schema()["properties"].keys() == {"query", "mode", "limit"}
     assert rag_tools.rag_get_document_preview_tool.args_schema.model_json_schema()["properties"].keys() == {
         "document_id",

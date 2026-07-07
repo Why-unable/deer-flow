@@ -129,7 +129,12 @@ def test_http_client_preserves_http_error_contract(monkeypatch: pytest.MonkeyPat
 @pytest.mark.parametrize(
     ("method_name", "kwargs", "expected_path", "expected_params"),
     [
-        ("list_documents", {"limit": 20}, "/api/documents", {"status": "ready", "limit": 20}),
+        (
+            "list_documents",
+            {"limit": 20, "offset": 40, "collection_id": 7},
+            "/api/documents",
+            {"status": "ready", "limit": 20, "offset": 40, "collection_id": 7},
+        ),
         ("search", {"query": "nist", "mode": "hybrid", "limit": 5}, "/api/search", {"q": "nist", "mode": "hybrid", "limit": 5}),
         ("get_document", {"document_id": "doc-1"}, "/api/documents/doc-1", None),
         ("get_document_preview", {"document_id": "doc-1"}, "/api/documents/doc-1/preview", None),

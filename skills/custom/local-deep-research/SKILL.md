@@ -68,7 +68,7 @@ report_active_skill(skill_name="local-deep-research")
 2. 如果命中的 chunks/assets 已足以支持可靠回答，直接综合并回答。
 3. 只有在检索片段缺少必要上下文、需要精确证据或涉及视觉细节时，才继续调用 `rag_get_document_preview`、`rag_get_document_chunks` 或视觉资产工具。
 4. 如果 `rag_get_document_preview` 返回 `truncated=true`，且当前预览不足以了解文档概览，例如目录、章节结构或开头背景不完整，可以提高 `max_chars`，或使用上一轮返回的 `end_char` 作为 `start_char` 继续读取下一段 preview；若用户问题涉及全文、整篇、完整总结、方法、实验、结果、局限或其它需要覆盖后续章节的判断，优先使用 `rag_get_document_chunks` 或更有针对性的 `rag_search` 后再回答。
-5. 不要把 `rag_list_documents` 当作普通主题查询的固定前置步骤；它用于文档清单、范围发现或多文档综述候选池。
+5. 不要把 `rag_list_documents` 当作普通主题查询的固定前置步骤；它用于文档清单、范围发现、按 `collection_id` 缩小文档池，或多文档综述候选池。
 6. 除非用户明确要求报告、文件或可下载交付物，否则直接在聊天正文中回答，不默认生成文件。
 
 ### 本地路径禁用规则
