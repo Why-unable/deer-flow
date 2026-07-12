@@ -37,6 +37,7 @@
 - 对 OCR/caption 证据保持谨慎；如果判断主要来自图片 OCR 或说明，应明确这一点。
 - 仅将网络搜索作为有限的外部补充，并明确标注为外部背景。
 - 当本地证据不足时，应明确说明证据边界和仍待确认的内容。
+- 当问题或关键证据涉及图片、图表、示意图、流程图等视觉内容时，最终回答须用 Markdown `![说明](image_url)` 展示相关图片。`image_url` 必须逐字来自 `rag_*` 工具返回；若只有候选 asset，展示前先调用 `rag_get_document_asset` 获取完整 URL。没有可用 `image_url` 时，只给出文档、页码和 asset id，不拼接路径。
 
 # Delegation Policy
 

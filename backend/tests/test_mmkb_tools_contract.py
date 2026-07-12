@@ -7,6 +7,9 @@ import pytest
 from deerflow.tools.custom.rag import tools as rag_tools
 
 
+DOC_ID = "859b3373-a899-43bc-8c3d-669daabf70b2"
+
+
 class RecordingService:
     def __init__(self, calls: list[tuple]) -> None:
         self._calls = calls
@@ -56,11 +59,11 @@ def test_all_rag_tools_delegate_to_semantic_service(monkeypatch: pytest.MonkeyPa
 
     json.loads(rag_tools.rag_list_documents_tool.func(20, 100, 7, config={}))
     json.loads(rag_tools.rag_search_tool.func("nist", "hybrid", 5, config={}))
-    json.loads(rag_tools.rag_get_document_tool.func("doc-1", config={}))
-    json.loads(rag_tools.rag_get_document_preview_tool.func("doc-1", 12000, config={}))
-    json.loads(rag_tools.rag_get_document_chunks_tool.func("doc-1", config={}))
-    json.loads(rag_tools.rag_get_document_assets_tool.func("doc-1", 0, 8, config={}))
-    detail = json.loads(rag_tools.rag_get_document_asset_tool.func("doc-1", 101, config={}))
+    json.loads(rag_tools.rag_get_document_tool.func(DOC_ID, config={}))
+    json.loads(rag_tools.rag_get_document_preview_tool.func(DOC_ID, 12000, config={}))
+    json.loads(rag_tools.rag_get_document_chunks_tool.func(DOC_ID, config={}))
+    json.loads(rag_tools.rag_get_document_assets_tool.func(DOC_ID, 0, 8, config={}))
+    detail = json.loads(rag_tools.rag_get_document_asset_tool.func(DOC_ID, 101, config={}))
     json.loads(rag_tools.rag_list_collections_tool.func(config={}))
 
     assert built_for == [
@@ -76,11 +79,11 @@ def test_all_rag_tools_delegate_to_semantic_service(monkeypatch: pytest.MonkeyPa
     assert calls == [
         ("list_documents", 20, 100, 7),
         ("search", "nist", "hybrid", 5),
-        ("get_document", "doc-1"),
-        ("get_document_preview", "doc-1"),
-        ("get_document_chunks", "doc-1"),
-        ("get_document_assets", "doc-1"),
-        ("get_document_assets", "doc-1"),
+        ("get_document", DOC_ID),
+        ("get_document_preview", DOC_ID),
+        ("get_document_chunks", DOC_ID),
+        ("get_document_assets", DOC_ID),
+        ("get_document_assets", DOC_ID),
         ("list_collections",),
     ]
     assert detail["media_urls"]["image_url"] == "https://mmkb.example/image"
@@ -127,7 +130,7 @@ def test_document_preview_omits_raw_markdown_image_links(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(rag_tools, "_build_mmkb_service", build_service)
 
-    payload = json.loads(rag_tools.rag_get_document_preview_tool.func("doc-1", 12000, config={}))
+    payload = json.loads(rag_tools.rag_get_document_preview_tool.func(DOC_ID, 12000, config={}))
 
     assert "md_images" not in payload["preview_text"]
     assert "/api/documents" not in payload["preview_text"]
@@ -165,7 +168,7 @@ def test_document_preview_preserves_image_description_without_paths(monkeypatch:
 
     monkeypatch.setattr(rag_tools, "_build_mmkb_service", build_service)
 
-    payload = json.loads(rag_tools.rag_get_document_preview_tool.func("doc-1", 12000, config={}))
+    payload = json.loads(rag_tools.rag_get_document_preview_tool.func(DOC_ID, 12000, config={}))
     preview = payload["preview_text"]
 
     assert "图片说明" in preview
@@ -204,8 +207,8 @@ def test_document_preview_can_continue_from_sanitized_offset(monkeypatch: pytest
 
     monkeypatch.setattr(rag_tools, "_build_mmkb_service", build_service)
 
-    first = json.loads(rag_tools.rag_get_document_preview_tool.func("doc-1", 1000, 0, config={}))
-    second = json.loads(rag_tools.rag_get_document_preview_tool.func("doc-1", 1000, first["end_char"], config={}))
+    first = json.loads(rag_tools.rag_get_document_preview_tool.func(DOC_ID, 1000, 0, config={}))
+    second = json.loads(rag_tools.rag_get_document_preview_tool.func(DOC_ID, 1000, first["end_char"], config={}))
 
     assert first["preview_text"] == "a" * 1000
     assert first["start_char"] == 0
@@ -220,6 +223,58 @@ def test_document_preview_can_continue_from_sanitized_offset(monkeypatch: pytest
     assert second["has_before"] is True
     assert second["has_after"] is True
     assert second["offset_unit"] == "sanitized_preview_text_chars"
+
+
+def test_document_tools_reject_non_uuid_document_id(monkeypatch: pytest.MonkeyPatch):
+    def fail_build_service(_tool_name: str, _config):
+        raise AssertionError("service should not be called for invalid document_id")
+
+    monkeypatch.setattr(rag_tools, "_build_mmkb_service", fail_build_service)
+
+    tools = [
+        lambda: rag_tools.rag_get_document_tool.func("science.adr2118.pdf", config={}),
+        lambda: rag_tools.rag_get_document_preview_tool.func("science.adr2118.pdf", 12000, config={}),
+        lambda: rag_tools.rag_get_document_chunks_tool.func("document_url", config={}),
+        lambda: rag_tools.rag_get_document_assets_tool.func("/documents/not-a-uuid", 0, 5, config={}),
+        lambda: rag_tools.rag_get_document_asset_tool.func("science.adr2118.pdf", 101, config={}),
+    ]
+
+    for call in tools:
+        payload = json.loads(call())
+        assert payload["error"].startswith("document_id must be a MMKB document UUID")
+        assert "rag_search" in payload["next_step"]
+
+
+def test_rag_tools_return_parameter_errors_instead_of_raising(monkeypatch: pytest.MonkeyPatch):
+    def fail_build_service(_tool_name: str, _config):
+        raise AssertionError("service should not be called for invalid parameters")
+
+    monkeypatch.setattr(rag_tools, "_build_mmkb_service", fail_build_service)
+
+    assert json.loads(
+        rag_tools.rag_list_documents_tool.func("many", 0, None, config={})
+    ) == {"error": "limit must be an integer"}
+    assert json.loads(
+        rag_tools.rag_list_documents_tool.func(10, "later", None, config={})
+    ) == {"error": "offset must be an integer"}
+    assert json.loads(
+        rag_tools.rag_search_tool.func("query", "wrong", 10, config={})
+    ) == {"error": "mode must be one of: semantic, sparse, hybrid"}
+    assert json.loads(
+        rag_tools.rag_search_tool.func("query", "hybrid", "many", config={})
+    ) == {"error": "limit must be an integer"}
+    assert json.loads(
+        rag_tools.rag_get_document_preview_tool.func(DOC_ID, "many", 0, config={})
+    ) == {"error": "max_chars must be an integer"}
+    assert json.loads(
+        rag_tools.rag_get_document_preview_tool.func(DOC_ID, 12000, "later", config={})
+    ) == {"error": "start_char must be an integer"}
+    assert json.loads(
+        rag_tools.rag_get_document_assets_tool.func(DOC_ID, "later", 5, config={})
+    ) == {"error": "offset must be an integer"}
+    assert json.loads(
+        rag_tools.rag_get_document_asset_tool.func(DOC_ID, "asset", config={})
+    ) == {"error": "asset_id must be an integer"}
 
 
 def test_rag_tool_descriptions_distinguish_topical_search_from_inventory():

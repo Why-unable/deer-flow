@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 from langchain.tools import tool
 from langchain_core.runnables import RunnableConfig
@@ -25,6 +26,52 @@ from deerflow.tools.custom.rag.service import (
 
 def _json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+def _normalize_document_id(document_id: Any) -> tuple[str | None, dict[str, str] | None]:
+    value = str(document_id or "").strip()
+    if not value:
+        return None, {"error": "document_id is required"}
+    try:
+        return str(UUID(value)), None
+    except (TypeError, ValueError, AttributeError):
+        return None, {
+            "error": (
+                "document_id must be a MMKB document UUID copied from "
+                "rag_search or rag_list_documents; do not use a filename, "
+                "title, path, or document_url field name"
+            ),
+            "received": value[:120],
+            "next_step": (
+                "Call rag_search for topical questions, or rag_list_documents "
+                "for inventory, then pass the returned document_id value."
+            ),
+        }
+
+
+def _normalize_int(
+    value: Any,
+    *,
+    name: str,
+    min_value: int,
+    max_value: int | None = None,
+) -> tuple[int | None, dict[str, str] | None]:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return None, {"error": f"{name} must be an integer"}
+    if normalized < min_value:
+        return None, {"error": f"{name} must be >= {min_value}"}
+    if max_value is not None and normalized > max_value:
+        normalized = max_value
+    return normalized, None
+
+
+def _normalize_mode(mode: Any) -> tuple[str | None, dict[str, str] | None]:
+    normalized = str(mode or "hybrid").strip().lower()
+    if normalized not in {"semantic", "sparse", "hybrid"}:
+        return None, {"error": "mode must be one of: semantic, sparse, hybrid"}
+    return normalized, None
 
 
 _PREVIEW_RAW_IMAGE_PATTERN = re.compile(
@@ -175,8 +222,12 @@ def rag_list_documents_tool(
         offset: Zero-based page offset. Use the returned `next_offset` to continue.
         collection_id: Optional MMKB collection ID used to restrict the listed documents.
     """
-    limit = max(min(int(limit), 100), 1)
-    offset = max(int(offset), 0)
+    limit, error = _normalize_int(limit, name="limit", min_value=1, max_value=100)
+    if error:
+        return _json(error)
+    offset, error = _normalize_int(offset, name="offset", min_value=0)
+    if error:
+        return _json(error)
     normalized_collection_id = None
     if collection_id is not None:
         try:
@@ -263,7 +314,12 @@ def rag_search_tool(
     query = str(query or "").strip()
     if not query:
         return _json({"error": "query is required"})
-    limit = max(min(int(limit), 50), 1)
+    mode, error = _normalize_mode(mode)
+    if error:
+        return _json(error)
+    limit, error = _normalize_int(limit, name="limit", min_value=1, max_value=50)
+    if error:
+        return _json(error)
     data = _build_mmkb_service("rag_search", config).search(query=query, mode=mode, limit=limit)
     return _json(data)
 
@@ -299,9 +355,9 @@ def rag_get_document_tool(
     Args:
         document_id: UUID of the local knowledge-base document.
     """
-    document_id = str(document_id or "").strip()
-    if not document_id:
-        return _json({"error": "document_id is required"})
+    document_id, error = _normalize_document_id(document_id)
+    if error:
+        return _json(error)
     data = _build_mmkb_service("rag_get_document", config).get_document(document_id=document_id)
     return _json(data)
 
@@ -361,9 +417,16 @@ def rag_get_document_preview_tool(
             Use the previous response's `end_char` to continue reading the next
             preview window without repeating earlier text.
     """
-    document_id = str(document_id or "").strip()
-    if not document_id:
-        return _json({"error": "document_id is required"})
+    document_id, error = _normalize_document_id(document_id)
+    if error:
+        return _json(error)
+
+    max_chars, error = _normalize_int(max_chars, name="max_chars", min_value=1000, max_value=50000)
+    if error:
+        return _json(error)
+    start_char, error = _normalize_int(start_char, name="start_char", min_value=0)
+    if error:
+        return _json(error)
 
     data = _build_mmkb_service("rag_get_document_preview", config).get_document_preview(document_id=document_id)
     if not isinstance(data, dict):
@@ -384,8 +447,6 @@ def rag_get_document_preview_tool(
             "safe image descriptions may be retained as path-free plain text. "
             "Use rag_get_document_assets/rag_get_document_asset for signed image_url."
         )
-    max_chars = max(min(int(max_chars), 50000), 1000)
-    start_char = max(int(start_char), 0)
     total_chars = len(text)
     window_start = min(start_char, total_chars)
     window_end = min(window_start + max_chars, total_chars)
@@ -434,9 +495,9 @@ def rag_get_document_chunks_tool(
     Args:
         document_id: UUID of the local knowledge-base document.
     """
-    document_id = str(document_id or "").strip()
-    if not document_id:
-        return _json({"error": "document_id is required"})
+    document_id, error = _normalize_document_id(document_id)
+    if error:
+        return _json(error)
     data = _build_mmkb_service("rag_get_document_chunks", config).get_document_chunks(document_id=document_id)
     return _json(data)
 
@@ -482,11 +543,15 @@ def rag_get_document_assets_tool(
         offset: Zero-based catalog offset. Use the returned next_page offset to continue.
         limit: Maximum number of compact assets to return, capped to 10.
     """
-    document_id = str(document_id or "").strip()
-    if not document_id:
-        return _json({"error": "document_id is required"})
-    offset = max(int(offset), 0)
-    limit = max(min(int(limit), ASSET_CATALOG_MAX_LIMIT), 1)
+    document_id, error = _normalize_document_id(document_id)
+    if error:
+        return _json(error)
+    offset, error = _normalize_int(offset, name="offset", min_value=0)
+    if error:
+        return _json(error)
+    limit, error = _normalize_int(limit, name="limit", min_value=1, max_value=ASSET_CATALOG_MAX_LIMIT)
+    if error:
+        return _json(error)
     data = _build_mmkb_service("rag_get_document_assets", config).get_document_assets(document_id=document_id)
     return _json(_compact_asset_catalog(data, offset=offset, limit=limit))
 
@@ -513,15 +578,12 @@ def rag_get_document_asset_tool(
         document_id: UUID of the document containing the asset.
         asset_id: Numeric asset ID from the compact catalog or search result.
     """
-    document_id = str(document_id or "").strip()
-    if not document_id:
-        return _json({"error": "document_id is required"})
-    try:
-        normalized_asset_id = int(asset_id)
-    except (TypeError, ValueError):
-        return _json({"error": "asset_id must be an integer"})
-    if normalized_asset_id <= 0:
-        return _json({"error": "asset_id must be positive"})
+    document_id, error = _normalize_document_id(document_id)
+    if error:
+        return _json(error)
+    normalized_asset_id, error = _normalize_int(asset_id, name="asset_id", min_value=1)
+    if error:
+        return _json(error)
 
     data = _build_mmkb_service("rag_get_document_asset", config).get_document_assets(document_id=document_id)
     return _json(_select_document_asset(data, normalized_asset_id))
