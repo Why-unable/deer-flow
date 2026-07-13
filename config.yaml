@@ -816,7 +816,16 @@ loop_detection:
   # higher or lower than the global defaults. Commonly used to raise thresholds
   # for high-frequency tools like bash in batch workflows (e.g. RNA-seq pipelines)
   # without weakening protection on every other tool.
-  # tool_freq_overrides:
+  tool_freq_overrides:
+    # 综述时 agent 会逐张狂拉图片资产（每次 asset_id 不同，绕过“相同调用”检测），
+    # 极耗 token 又拖满递归步数。这里从引擎层强制收敛：单次 run 内取图详情
+    # 超过 12 次即强制收尾，不依赖模型自觉。目录浏览工具阈值略高。
+    rag_get_document_asset:
+      warn: 8
+      hard_limit: 12
+    rag_get_document_assets:
+      warn: 10
+      hard_limit: 16
   #   bash:
   #     warn: 150
   #     hard_limit: 300
@@ -960,6 +969,18 @@ sandbox:
 # Configure timeouts for subagent execution
 # Subagents are background workers delegated tasks by the lead agent
 
+# 本地综述/深度研究会读几十篇文档 + 多张图，subagent 默认 max_turns=50 步数不够，
+# 会撞 "Recursion limit reached" 失败、报告丢失。这里把默认步数抬到 160，
+# 并给 general-purpose（综述子任务实际用的类型）单独放宽超时与步数。
+subagents:
+  timeout_seconds: 900
+  max_turns: 160
+  agents:
+    general-purpose:
+      timeout_seconds: 1800
+      max_turns: 160
+
+# 下面为原始注释示例，保留供参考：
 # subagents:
 #   # Default timeout in seconds for all subagents (default: 900 = 15 minutes)
 #   timeout_seconds: 900
@@ -1135,7 +1156,7 @@ summarization:
 # Global memory mechanism
 # Stores user context and conversation history for personalized responses
 memory:
-  enabled: true
+  enabled: false
   storage_path: memory.json # Path relative to backend directory
   debounce_seconds: 30 # Wait time before processing queued updates
   model_name: null # Use default model
