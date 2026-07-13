@@ -663,56 +663,48 @@ tools:
     group: knowledge
     use: deerflow.tools.custom.rag.tools:rag_list_documents_tool
     base_url: http://host.docker.internal
-    public_base_url_fallback: http://rag.mmkb
     timeout: 30
 
   - name: rag_search
     group: knowledge
     use: deerflow.tools.custom.rag.tools:rag_search_tool
     base_url: http://host.docker.internal
-    public_base_url_fallback: http://rag.mmkb
     timeout: 30
 
   - name: rag_get_document
     group: knowledge
     use: deerflow.tools.custom.rag.tools:rag_get_document_tool
     base_url: http://host.docker.internal
-    public_base_url_fallback: http://rag.mmkb
     timeout: 30
 
   - name: rag_get_document_preview
     group: knowledge
     use: deerflow.tools.custom.rag.tools:rag_get_document_preview_tool
     base_url: http://host.docker.internal
-    public_base_url_fallback: http://rag.mmkb
     timeout: 30
 
   - name: rag_get_document_chunks
     group: knowledge
     use: deerflow.tools.custom.rag.tools:rag_get_document_chunks_tool
     base_url: http://host.docker.internal
-    public_base_url_fallback: http://rag.mmkb
     timeout: 30
 
   - name: rag_get_document_assets
     group: knowledge
     use: deerflow.tools.custom.rag.tools:rag_get_document_assets_tool
     base_url: http://host.docker.internal
-    public_base_url_fallback: http://rag.mmkb
     timeout: 30
 
   - name: rag_get_document_asset
     group: knowledge
     use: deerflow.tools.custom.rag.tools:rag_get_document_asset_tool
     base_url: http://host.docker.internal
-    public_base_url_fallback: http://rag.mmkb
     timeout: 30
 
   - name: rag_list_collections
     group: knowledge
     use: deerflow.tools.custom.rag.tools:rag_list_collections_tool
     base_url: http://host.docker.internal
-    public_base_url_fallback: http://rag.mmkb
     timeout: 30
 
   # Image search tool (uses InfoQuest)
