@@ -172,6 +172,26 @@ def _sanitize_preview_text(text: str) -> tuple[str, int, int, int]:
     return sanitized, image_links_removed, image_metadata_removed, image_descriptions_preserved
 
 
+def _preview_error_payload(data: dict[str, Any], document_id: str) -> dict[str, Any]:
+    """Keep MMKB HTTP/API errors from being reshaped as successful previews."""
+    payload = {**data, "document_id": data.get("document_id") or document_id, "preview_available": False}
+    if payload.get("status_code") == 404:
+        payload.setdefault(
+            "next_step",
+            (
+                "The document was not found in the authenticated MMKB workspace. "
+                "Call rag_list_documents or rag_search again and use a current item id; "
+                "use rag_get_document_chunks when preview text is unavailable."
+            ),
+        )
+    elif payload.get("error") == "rag_http_error":
+        payload.setdefault(
+            "next_step",
+            "Check MMKB authentication/workspace scope, then retry with a current document_id.",
+        )
+    return payload
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Tools
 # ═══════════════════════════════════════════════════════════════════════════
@@ -431,6 +451,8 @@ def rag_get_document_preview_tool(
     data = _build_mmkb_service("rag_get_document_preview", config).get_document_preview(document_id=document_id)
     if not isinstance(data, dict):
         return _json(data)
+    if data.get("error"):
+        return _json(_preview_error_payload(data, document_id))
 
     text = str(data.get("preview_text") or "")
     text, image_links_removed, image_metadata_removed, image_descriptions_preserved = _sanitize_preview_text(text)

@@ -370,6 +370,75 @@ def test_merge_run_context_overrides_propagates_to_runtime_context():
     assert "thread_id" not in config["context"]
 
 
+def test_mmkb_runtime_model_config_extends_app_config_without_mutating_base():
+    from app.gateway.services import _app_config_with_mmkb_runtime_model, _mmkb_runtime_model_config
+    from deerflow.config.app_config import AppConfig
+    from deerflow.config.model_config import ModelConfig
+    from deerflow.config.sandbox_config import SandboxConfig
+
+    base = AppConfig(
+        sandbox=SandboxConfig(use="deerflow.sandbox.local:LocalSandboxProvider"),
+        models=[
+            ModelConfig(
+                name="global-model",
+                use="langchain_openai:ChatOpenAI",
+                model="global-model",
+                api_key="global-secret",
+                base_url="https://global.example/v1",
+            )
+        ],
+    )
+    runtime_model = _mmkb_runtime_model_config(
+        {
+            "model_name": "tenant-qwen",
+            "mmkb_model_config": {
+                "name": "tenant-qwen",
+                "model": "tenant-qwen",
+                "base_url": "https://tenant.example/v1/",
+                "api_key": "tenant-secret",
+                "protocol": "openai_compatible",
+            },
+        }
+    )
+
+    app_config = _app_config_with_mmkb_runtime_model(base, runtime_model)
+
+    assert app_config is not base
+    assert base.get_model_config("tenant-qwen") is None
+    assert app_config.get_model_config("tenant-qwen") is not None
+    assert app_config.models[0].name == "tenant-qwen"
+    assert app_config.models[0].base_url == "https://tenant.example/v1"
+    assert app_config.models[0].api_key == "tenant-secret"
+    assert app_config.get_model_config("global-model") is not None
+
+
+def test_merge_run_context_overrides_does_not_forward_mmkb_model_config_secret():
+    from app.gateway.services import (
+        _context_without_mmkb_model_config,
+        build_run_config,
+        merge_run_context_overrides,
+    )
+
+    config = build_run_config("thread-1", None, None)
+    context = {
+        "model_name": "tenant-qwen",
+        "mmkb_workspace_id": "workspace-1",
+        "mmkb_model_config": {
+            "name": "tenant-qwen",
+            "api_key": "tenant-secret",
+            "base_url": "https://tenant.example/v1",
+        },
+    }
+
+    merge_run_context_overrides(config, _context_without_mmkb_model_config(context))
+
+    assert config["configurable"]["model_name"] == "tenant-qwen"
+    assert config["context"]["model_name"] == "tenant-qwen"
+    assert "mmkb_model_config" not in config["configurable"]
+    assert "mmkb_model_config" not in config["context"]
+    assert "tenant-secret" not in repr(config)
+
+
 def test_merge_run_context_overrides_logs_public_base_url(caplog):
     from app.gateway.services import build_run_config, merge_run_context_overrides
 

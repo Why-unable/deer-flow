@@ -76,6 +76,9 @@ MMKB 先鉴权外部客户端，然后调用 DeerFlow Gateway，并传入：
 - `context.public_base_url`：面向用户可访问的 MMKB base URL，用于生成可见链接；
 - `context.mmkb_workspace_id`、`context.mmkb_user_id`、
   `context.mmkb_tenant_id`：MMKB 已鉴权后的身份元数据；
+- `context.model_name` 与可选的 `context.mmkb_model_config`：当 MMKB
+  租户配置了完整的 OpenAI-compatible Chat LLM 时，MMKB 会把
+  `model/base_url/api_key` 作为本次 run 的运行时模型配置传入；
 - `X-DeerFlow-Internal-Token`：共享内部密钥；
 - 匹配的 CSRF header/cookie 对。
 
@@ -88,6 +91,9 @@ MMKB API 时再验证。
 
 - 将 `public_base_url`、`mmkb_workspace_id`、`mmkb_user_id`、
   `mmkb_tenant_id` 加入 context/configurable 允许列表；
+- 将 `context.mmkb_model_config` 转换为单次 run 的 AppConfig 副本，
+  让租户自定义模型通过 Gateway allowlist 校验并被 lead agent 使用；
+  该字段不会被写入普通 `configurable/context`，避免 API key 进入工具上下文；
 - `resolve_mmkb_proxy_user(...)`，把 MMKB 身份映射为路径安全的
   DeerFlow runtime user id：
 
@@ -586,10 +592,10 @@ SOUL 行为：
 
 `config.yaml` 是完整的本地 runtime 配置。与集成相关的部分包括：
 
-- model allowlist 包含 MMKB 网页端模型选择会传入的
-  `doubao-seed-1-6-250615`、`doubao-seed-2-0-pro-260215`；
-  Gateway 仍会拒绝不在
-  `config.yaml` `models:` 中的 `context.model_name`；
+- model allowlist 默认来自 `config.yaml` `models:`。MMKB 显式选择
+  registry 模型时仍要求该 `context.model_name` 能在 DeerFlow 配置中解析；
+  如果请求携带 MMKB 租户的 `context.mmkb_model_config`，Gateway 会先构造
+  单次 run 的 AppConfig 副本并把该模型加入副本，再执行 allowlist 校验；
 - model provider 使用 `CHAT_COMPLETION_API_KEY` 或
   `MULTIMODAL_EMBED_API_KEY`；
 - 自定义 MMKB RAG 工具注册到 `knowledge` group；
@@ -841,7 +847,7 @@ git rm --cached .env
 | `backend/tests/test_mmkb_links.py` | MMKB 阶段 4 链接处理测试 | 保护绝对化、漏签检测和无敏感内容聚合日志 |
 | `backend/tests/test_mmkb_tools_contract.py` | 8 个工具的 service 委派与 schema 契约测试 | 防止重构或新增 transport 时改变公开工具行为 |
 | `backend/tests/test_custom_agent.py` | fallback 测试 | 保护共享 agent/用户级 memory 行为 |
-| `config.yaml` | 本地 runtime 配置 | 注册 MMKB tools，同步 MMKB 网页端可选模型 allowlist，并将 run events 持久化到数据库以控制 Gateway 内存增长 |
+| `config.yaml` | 本地 runtime 配置 | 注册 MMKB tools 和全局可选模型 allowlist；租户自定义模型由 MMKB 运行时传入，不写入此文件；同时将 run events 持久化到数据库以控制 Gateway 内存增长 |
 | `docker/docker-compose-dev.yaml` | 移除空 token override | 保留 `.env` 中的内部 auth token |
 | `docs/deploy.md` | MMKB 集成版 DeerFlow 最简部署指南 | 说明 `.env`、内部认证检查和 Docker 启动步骤 |
 | `docs/MMKB_AGENT_OUTPUT_COMPARISON.md` | DeerFlow 前端与 MMKB Agent Mode 输出对比 | 记录事件转换、Artifact 和通用 OpenAI 客户端展示边界 |

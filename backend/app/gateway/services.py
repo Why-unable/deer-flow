@@ -12,6 +12,7 @@ import json
 import logging
 import re
 from collections.abc import Mapping
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -21,7 +22,8 @@ from langchain_core.messages.utils import convert_to_messages
 
 from app.gateway.deps import get_run_context, get_run_manager, get_stream_bridge
 from app.gateway.utils import sanitize_log_param
-from deerflow.config.app_config import get_app_config
+from deerflow.config.app_config import AppConfig, get_app_config
+from deerflow.config.model_config import ModelConfig
 from deerflow.runtime import (
     END_SENTINEL,
     HEARTBEAT_SENTINEL,
@@ -140,6 +142,81 @@ _CONTEXT_CONFIGURABLE_KEYS: frozenset[str] = frozenset(
         "mmkb_tenant_id",
     }
 )
+
+
+def _optional_float(value: Any, default: float) -> float:
+    if value in (None, ""):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _optional_int(value: Any, default: int) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _mmkb_runtime_model_config(context: Mapping[str, Any] | None) -> ModelConfig | None:
+    """Convert MMKB tenant Chat LLM settings into a per-run model config."""
+    if not isinstance(context, Mapping):
+        return None
+    raw = context.get("mmkb_model_config")
+    if not isinstance(raw, Mapping):
+        return None
+
+    protocol = str(raw.get("protocol") or "openai_compatible").strip()
+    if protocol != "openai_compatible":
+        return None
+
+    model_name = str(raw.get("model") or raw.get("model_name") or raw.get("name") or "").strip()
+    name = str(raw.get("name") or model_name).strip()
+    base_url = str(raw.get("base_url") or "").strip().rstrip("/")
+    api_key = str(raw.get("api_key") or "").strip()
+    if not name or not model_name or not base_url or not api_key:
+        return None
+
+    return ModelConfig(
+        name=name[:128],
+        display_name=str(raw.get("display_name") or f"{name} (MMKB tenant)").strip(),
+        description="Runtime model forwarded by MMKB tenant settings",
+        use="langchain_openai:ChatOpenAI",
+        model=model_name,
+        api_key=api_key,
+        base_url=base_url,
+        request_timeout=_optional_float(raw.get("request_timeout"), 600.0),
+        max_retries=_optional_int(raw.get("max_retries"), 2),
+        max_tokens=_optional_int(raw.get("max_tokens"), 16000),
+        temperature=_optional_float(raw.get("temperature"), 0.7),
+        supports_thinking=bool(raw.get("supports_thinking") is True),
+        supports_vision=bool(raw.get("supports_vision") is True),
+    )
+
+
+def _app_config_with_mmkb_runtime_model(
+    base_config: AppConfig,
+    runtime_model: ModelConfig | None,
+) -> AppConfig:
+    """Return an AppConfig copy with the MMKB tenant model available for this run."""
+    if runtime_model is None:
+        return base_config
+
+    app_config = base_config.model_copy(deep=True)
+    app_config.models = [runtime_model, *[model for model in app_config.models if model.name != runtime_model.name]]
+    return app_config
+
+
+def _context_without_mmkb_model_config(context: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    if not isinstance(context, Mapping) or "mmkb_model_config" not in context:
+        return context
+    sanitized = dict(context)
+    sanitized.pop("mmkb_model_config", None)
+    return sanitized
 
 
 def _safe_context_log_value(value: Any) -> str:
@@ -338,15 +415,20 @@ async def start_run(
     disconnect = DisconnectMode.cancel if body.on_disconnect == "cancel" else DisconnectMode.continue_
 
     body_context = getattr(body, "context", None) or {}
+    if not isinstance(body_context, Mapping):
+        body_context = {}
+    mmkb_runtime_model = _mmkb_runtime_model_config(body_context)
+    app_config = _app_config_with_mmkb_runtime_model(get_app_config(), mmkb_runtime_model)
     model_name = body_context.get("model_name")
 
     # Coerce non-string model_name values to str before truncation.
     if model_name is not None and not isinstance(model_name, str):
         model_name = str(model_name)
+    if not model_name and mmkb_runtime_model is not None:
+        model_name = mmkb_runtime_model.name
 
     # Validate model against the allowlist when a model_name is provided.
     if model_name:
-        app_config = get_app_config()
         resolved = app_config.get_model_config(model_name)
         if resolved is None:
             raise HTTPException(
@@ -400,17 +482,18 @@ async def start_run(
         # The ``context`` field is a custom extension for the langgraph-compat layer
         # that carries agent configuration (model_name, thinking_enabled, etc.).
         # Only agent-relevant keys are forwarded; unknown keys (e.g. thread_id) are ignored.
-        merge_run_context_overrides(config, getattr(body, "context", None))
+        merge_run_context_overrides(config, _context_without_mmkb_model_config(body_context))
         inject_authenticated_user_context(config, request)
 
         stream_modes = normalize_stream_modes(body.stream_mode)
+        effective_run_ctx = replace(run_ctx, app_config=app_config) if mmkb_runtime_model is not None else run_ctx
 
         task = asyncio.create_task(
             run_agent(
                 bridge,
                 run_mgr,
                 record,
-                ctx=run_ctx,
+                ctx=effective_run_ctx,
                 agent_factory=agent_factory,
                 graph_input=graph_input,
                 config=config,

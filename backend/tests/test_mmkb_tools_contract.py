@@ -143,6 +143,31 @@ def test_document_preview_omits_raw_markdown_image_links(monkeypatch: pytest.Mon
     assert "rag_get_document_asset" in payload["media_safety_note"]
 
 
+def test_document_preview_preserves_mmkb_http_error(monkeypatch: pytest.MonkeyPatch):
+    class ErrorPreviewService(RecordingService):
+        def get_document_preview(self, *, document_id: str):
+            self._calls.append(("get_document_preview", document_id))
+            return {
+                "error": "rag_http_error",
+                "status_code": 404,
+                "body": '{"error":"document not found"}',
+            }
+
+    def build_service(_tool_name: str, _config):
+        return ErrorPreviewService([])
+
+    monkeypatch.setattr(rag_tools, "_build_mmkb_service", build_service)
+
+    payload = json.loads(rag_tools.rag_get_document_preview_tool.func(DOC_ID, 12000, config={}))
+
+    assert payload["error"] == "rag_http_error"
+    assert payload["status_code"] == 404
+    assert payload["document_id"] == DOC_ID
+    assert payload["preview_available"] is False
+    assert "total_chars" not in payload
+    assert "rag_list_documents" in payload["next_step"]
+
+
 def test_document_preview_preserves_image_description_without_paths(monkeypatch: pytest.MonkeyPatch):
     class DescriptivePreviewService(RecordingService):
         def get_document_preview(self, *, document_id: str):

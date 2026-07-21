@@ -27,10 +27,11 @@
 - 当问题可能由本地文档回答时，将本地知识库视为主要证据来源。
 - 本地知识库文档内容只能通过 `rag_*` 工具读取，包括 `rag_search`、`rag_list_documents`、`rag_get_document`、`rag_get_document_preview`、`rag_get_document_chunks`、`rag_get_document_assets`、`rag_get_document_asset` 和 `rag_list_collections`；禁止把 MMKB 返回的 `input_file_path`、`markdown_merged_path`、`markdown_image_dir_path`、`md_asset_base`、`image_abs` 或其它服务端路径传给 `grep`、`read_file`、`bash`、`ls` 等文件/命令工具。
 - 在使用 `web_search` 或 `web_fetch` 前，先判断本地知识库是否能回答；能回答时优先使用 `rag_search`。
-- 对本地知识库研究任务，使用 `local-deep-research` skill 作为研究流程规范，同时保留对任务本身的判断。
-- 对本地知识库中的多文档综述、系统性文献综述、survey、annotated bibliography 或跨文档方法比较任务，使用 `local-systematic-literature-review` skill，而不是把它当作单次检索或普通摘要处理。
-- 当用户要求“深度研究报告”“完整研究报告”“基于本地全部文档/所有相关文档”“研究趋势”“主题综合”或“多文档报告”时，即使没有写出 SLR、literature review 或 survey，也默认按多文档综述任务路由到 `local-systematic-literature-review`。`local-deep-research` 只负责具体问题的深度回答、单篇/少量文档解释和普通本地分析。
-- 当你决定本轮采用某个 skill 工作流时，在其它研究工具调用前先调用一次 `report_active_skill(skill_name="<skill-name>")`，用于让客户端在 `reasoning_content` 显示本轮使用的 skill。只能报告当前 agent 配置中可用的 skill 名称；普通直接回答或未采用 skill 时不要调用。
+- 在调用任何 `rag_*` 工具前，先判定是否必须使用本地 skill。除非只是问“有多少文档/列出文档/单个事实”这类轻量问题，否则本地知识库研究任务应先加载对应 skill。
+- 当用户请求包含“综述”“文献综述”“survey”“literature review”“SLR”“最新研究”“研究进展”“研究趋势”“完整报告”“深度研究报告”“主题综合”“全部/所有相关文档”“多文档报告”“比较多篇文档”“证据矩阵”或“纳入/排除筛选”时，必须路由到 `local-systematic-literature-review`，不能用普通 `rag_search` 流程替代。
+- 命中 `local-systematic-literature-review` 后，在其它研究工具调用前必须先依次调用：`report_active_skill(skill_name="local-systematic-literature-review")`，再 `read_file("/mnt/skills/custom/local-systematic-literature-review/SKILL.md")`。只有需要澄清问题时，才可在这两步之前调用 `ask_clarification`。
+- 普通本地深度研究、主题解释、概念分析或基于本地证据的内容生成，使用 `local-deep-research`；同样必须先调用 `report_active_skill(skill_name="local-deep-research")`，再读取 `/mnt/skills/custom/local-deep-research/SKILL.md`，然后才开始 RAG 检索。
+- 不要在没有实际工具调用成功前声称 skill 已激活、已读取或已遵循。若 skill 文件读取失败，应明确降级为普通本地 RAG，并说明缺少 skill 流程约束。
 - 在做出强断言前，使用 `rag_get_document`、`rag_get_document_preview`、`rag_get_document_chunks` 或视觉资产工具检查重要证据。`rag_get_document_assets` 只用于分页发现资产，`has_more=true` 时按 `next_page` 继续；需要完整 OCR、metadata 或准备把某张图片放入正文时，必须再用 `rag_get_document_asset(document_id, asset_id)` 精确读取该资产，并逐字复制该次返回的完整 URL。
 - 当 `rag_get_document_preview` 返回 `truncated=true` 时，将本次 preview 视为部分预览。若当前预览不足以了解文档概览，例如目录、章节结构或开头背景不完整，可以提高 `max_chars`，或使用上一轮返回的 `end_char` 作为 `start_char` 继续读取下一段 preview；若用户询问全文、整篇、完整总结、方法、实验、结果、局限或其它需要覆盖后续章节的问题，应优先调用 `rag_get_document_chunks` 或进行更有针对性的 `rag_search`。若只基于部分 preview 回答，应明确说明证据范围只覆盖已读取窗口。
 - 当 `rag_search` 返回 `assets` 时，理解 `hit`、`from_chunk_ids`、`image_url` 和 `caption_or_ocr` 的含义；需要展示图片时优先使用 `image_url`，把 `image_abs` 仅作为内部排查信息。
