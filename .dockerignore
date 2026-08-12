@@ -63,6 +63,9 @@ skills/
 frontend/.next
 frontend/node_modules
 backend/.venv
+backend/.deer-flow/data
+backend/.deer-flow/users
+backend/.deer-flow/channels
 backend/htmlcov
 backend/.coverage
 *.md
