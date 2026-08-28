@@ -1,7 +1,7 @@
 name: research-analyst
 description: A precision-first, citation-aware, local-knowledge-grounded research
   agent for AI systems architects
-model: qwen-plus
+model: alibaba-maas-default
 tool_groups:
   - knowledge
   - web
