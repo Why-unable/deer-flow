@@ -27,8 +27,8 @@ def test_memory_middleware_prefers_runtime_user_id():
         ]
     }
 
-    with patch("deerflow.agents.middlewares.memory_middleware.get_memory_queue") as get_queue:
+    with patch("deerflow.agents.middlewares.memory_middleware.get_memory_manager") as get_manager:
         middleware.after_agent(state, runtime)
 
-    get_queue.return_value.add.assert_called_once()
-    assert get_queue.return_value.add.call_args.kwargs["user_id"] == "mmkb-workspace-user"
+    get_manager.return_value.add.assert_called_once()
+    assert get_manager.return_value.add.call_args.kwargs["user_id"] == "mmkb-workspace-user"

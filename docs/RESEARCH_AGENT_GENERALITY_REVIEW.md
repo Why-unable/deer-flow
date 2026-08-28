@@ -239,4 +239,3 @@ skills:
 | “根据本地 NIST 文档解释 CSF 2.0” | 使用本地 RAG；按复杂度决定是否加载 `local-deep-research` |
 | “基于本地 NIST 文档写系统性综述” | 加载 `local-systematic-literature-review` |
 | “基于本地文档生成 PPT” | 使用本地证据和 PPT Skill，不执行无关研究流程 |
-

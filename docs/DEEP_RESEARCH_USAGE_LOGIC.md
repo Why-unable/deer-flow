@@ -282,4 +282,3 @@ Deep Research 的核心触发条件不是“用户说了 deep research”，而�
 对 DeerFlow 来说，`local-deep-research` 不应承担完整研究报告职责。
 它适合本地证据支持下的具体问题深度回答。完整报告、多文档综述、趋势和
 证据矩阵应由 `local-systematic-literature-review` 处理。
-

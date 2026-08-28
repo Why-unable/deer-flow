@@ -7,6 +7,8 @@ import posixpath
 import re
 from typing import Any
 
+from langchain_core.messages import BaseMessage
+
 _OUTPUT_ARTIFACT_RE = re.compile(r"/mnt/user-data/outputs/[^\s`\"')\]}<>]+")
 _SIGNED_ARTIFACT_RE = re.compile(r"(?:https?://[^\s`\"')\]}<>]+)?/api/(?:agent|deerflow)/artifacts/[^\s`\"')\]}<>]+")
 _TRAILING_PUNCTUATION = ".,;:!?，。；、"
@@ -54,3 +56,16 @@ def sanitize_memory_artifact_references(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: sanitize_memory_artifact_references(item) for key, item in value.items()}
     return copy.deepcopy(value)
+
+
+def sanitize_memory_messages(messages: list[Any]) -> list[Any]:
+    """Return a copy of conversation messages without reusable artifact links."""
+    sanitized: list[Any] = []
+    for message in messages:
+        if isinstance(message, BaseMessage):
+            sanitized.append(message.model_copy(update={"content": sanitize_memory_artifact_references(message.content)}))
+        elif isinstance(message, dict):
+            sanitized.append(sanitize_memory_artifact_references(message))
+        else:
+            sanitized.append(copy.deepcopy(message))
+    return sanitized

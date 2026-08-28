@@ -4,6 +4,11 @@
 它用于后续开发、代码审查、部署，以及将本分支 rebase 到上游
 `bytedance/deer-flow` 时作为依据。
 
+> 最近一次逐提交核验：2026-08-28。已将官方 `main` 的
+> `23d8e4b3` 合并到 `mmkb-integration`，并以旧分支 21 个提交、84 个
+> 差异路径和合并前未提交修改为三套独立清单交叉核对。本文件描述的是
+> 合并后的实际实现，不再把已被上游重构替代的旧文件当成当前入口。
+
 ## 总览
 
 这次集成把 DeerFlow 变成 MMKB 的独立 agent runtime：
@@ -82,10 +87,16 @@ MMKB 先鉴权外部客户端，然后调用 DeerFlow Gateway，并传入：
 - `X-DeerFlow-Internal-Token`：共享内部密钥；
 - 匹配的 CSRF header/cookie 对。
 
-`authz.py` 新增 `_is_mmkb_proxy_run_create(...)`。当请求体中包含语法上有效的
-`mmkb_bearer_token` 时，只允许 `resource="runs"` 且 `action="create"`
-的请求通过。DeerFlow 不解析、不验证这个 token；后续由 MMKB 工具调用
-MMKB API 时再验证。
+`authz.py` 新增 `_is_mmkb_proxy_run_create(...)`。只有同时满足以下条件才标记
+`request.state.mmkb_proxy = true` 并允许创建 run：
+
+- `resource="runs"` 且 `action="create"`；
+- `X-DeerFlow-Internal-Token` 通过常量时间比较；
+- `config.configurable.mmkb_bearer_token` 非空；
+- `context.mmkb_workspace_id` 与 `context.mmkb_user_id` 非空。
+
+DeerFlow 不解析 MMKB bearer；它只验证“调用方确实是受信内部代理”，文档权限
+仍由后续 MMKB API 校验。仅伪造一个 `mmkb_bearer_token` 已不能获得 bypass。
 
 `services.py` 新增：
 
@@ -93,7 +104,9 @@ MMKB API 时再验证。
   `mmkb_tenant_id` 加入 context/configurable 允许列表；
 - 将 `context.mmkb_model_config` 转换为单次 run 的 AppConfig 副本，
   让租户自定义模型通过 Gateway allowlist 校验并被 lead agent 使用；
-  该字段不会被写入普通 `configurable/context`，避免 API key 进入工具上下文；
+  新版 `AppConfig` 有私有模型名称索引，因此这里通过 `model_validate` 重建
+  配置与索引，而不是修改 `model_copy().models`；该字段不会被写入普通
+  `configurable/context`，避免 API key 进入 checkpoint 和工具上下文；
 - `resolve_mmkb_proxy_user(...)`，把 MMKB 身份映射为路径安全的
   DeerFlow runtime user id：
 
@@ -101,8 +114,9 @@ MMKB API 时再验证。
 mmkb-<workspace_id>-<user_id>
 ```
 
-这个 user id 会在创建 run 期间写入 DeerFlow runtime user context，
-随后在 `finally` 块中重置。
+这个 user id 同时用于 thread ownership、run attribution 与 runtime user
+context，并在创建 run 的 `finally` 块中重置。这样新版 Gateway 对已有 thread
+的 owner 检查不会把所有 MMKB 请求都归到默认 internal user。
 
 目的：
 
@@ -120,7 +134,8 @@ mmkb-<workspace_id>-<user_id>
 
 相关文件：
 
-- `backend/packages/harness/deerflow/config/agents_config.py`
+- `backend/packages/harness/deerflow/config/agents_config.py`（当前逻辑已由上游
+  原生实现，MMKB 分支不再保留重复 diff）
 - `backend/tests/test_custom_agent.py`
 
 在这次修改前，只要用户级 agent 目录存在于
@@ -148,23 +163,31 @@ config 和 SOUL。
 - 当用户目录只有 `memory.json` 时，config 会 fallback；
 - 同样条件下 SOUL 也会 fallback。
 
-### Memory 文件结构修复与运行时用户解析
+### 新版 Memory Manager 适配、运行时用户解析与 Artifact 清洗
 
 相关文件：
 
-- `backend/packages/harness/deerflow/agents/memory/storage.py`
+- `backend/packages/harness/deerflow/agents/memory/artifact_sanitizer.py`
 - `backend/packages/harness/deerflow/agents/middlewares/memory_middleware.py`
-- `backend/tests/test_memory_storage.py`
+- `backend/packages/harness/deerflow/agents/lead_agent/prompt.py`
+- `backend/packages/harness/deerflow/agents/memory/backends/deermem/deermem/core/prompts/memory_update.chat.yaml`
+- `backend/tests/test_memory_artifact_sanitizer.py`
 - `backend/tests/test_memory_middleware_user_context.py`
 
-用户级 `memory.json` 可能因旧版本、迁移或人工初始化而只包含 `{}`。
-该内容虽然是合法 JSON，但缺少更新器要求的 `user`、`history` 和 `facts`
-字段，会导致异步 memory 更新失败并持续保持空文件。
+上游已经把旧的 `memory/storage.py + prompt.py` 重构为可插拔 Memory Manager
+和 DeerMem/Mem0/Honcho/OpenViking 等 backend。旧分支针对旧 JSON storage 的
+结构补全代码不再机械移植；当前保留的是仍然成立的业务不变量：
 
-现在读取 memory 时会补齐缺失的标准结构，同时保留已有摘要、facts 和未知
-扩展字段。`MemoryMiddleware` 也会优先从 LangGraph runtime context 解析
-`user_id`，确保 MMKB 请求在后台 memory 更新阶段仍写入对应的
-`mmkb-<workspace>-<user>` bucket，而不是回退到 `default`。
+- `MemoryMiddleware` 在请求上下文还有效时解析并显式传递 runtime `user_id`，
+  使异步更新仍进入 `mmkb-<workspace>-<user>` bucket；
+- 写入 manager 前复制并递归清洗消息中的 `/mnt/user-data/outputs/*` 和签名
+  artifact URL，避免跨 thread 复用短期能力链接；
+- lead agent 注入已存 memory 时再次清洗，兼容历史脏数据；
+- DeerMem 更新 prompt 明确禁止记忆原始路径、签名 URL 和短期 token。
+
+`config.yaml` 当前 `memory.enabled: false`，所以仓库中的历史 `memory.json`
+只是复现资料，不代表生产已启用长期记忆。启用前仍需单独验证后端选择、用户
+隔离和迁移策略。
 
 ## 自定义 MMKB RAG 工具
 
@@ -792,6 +815,70 @@ git rm --cached .env
 
 然后在每台机器上保留本地专用 `.env`。
 
+## 2026-08-28 上游同步与完整性核验
+
+### 核验范围
+
+本次不是只对照本文档，而是直接使用 Git 对三类事实做核验：
+
+1. merge-base `74e3e80c` 到旧 `mmkb-integration` HEAD `f4a58b10` 的
+   21 个本地提交；
+2. `upstream/main...旧分支` 的 84 个差异路径（约 1.8 万行新增，包含文档、
+   配置与 runtime seed）；
+3. 合并前工作区中未提交的 `.gitignore` 与本文件修改。
+
+另外检查了 staged/untracked、`skip-worktree`、`assume-unchanged`，合并前没有
+被这些 Git 状态隐藏的代码改动。保护分支为
+`backup/mmkb-integration-pre-upstream-main-20260828`。
+
+### 特色能力在新版架构中的落点
+
+| 旧分支能力 | 合并后落点 | 核验结论 |
+|---|---|---|
+| MMKB 内部 run-create bypass | `authz.py` + `services.py` | 保留，并新增 internal token 与完整 workspace/user 条件 |
+| workspace+user 隔离 | Gateway thread owner、runtime context、Memory Manager user id | 保留，适配新版 thread ownership |
+| 租户 OpenAI-compatible 模型 | request-scoped `AppConfig` | 保留；修复新版私有模型索引重建问题 |
+| 8 个 RAG tools | `tools/custom/rag/*` + `config.yaml` | 全部保留，配置加载实测 8/8 可解析 |
+| lead → subagent RAG 鉴权 | `task_tool.py` + `subagents/executor.py` | 保留，只传递明确白名单，不复制其他 secret/context |
+| Artifact 身份与 URL 质量校验 | `auth_middleware.py`、`journal.py`、resource validator | 保留，适配新版 internal auth、RunJournal |
+| Skill 选择状态 | `report_active_skill_tool.py` + builtin registry | 保留；与上游 slash SkillActivation 互补，不是重复功能 |
+| Agent/SOUL/Research skills | `.deer-flow/agents/*`、`skills/custom/*` | 保留 |
+| Docker/监控/鉴权预检 | Compose、Dockerfile、monitor、scripts | 保留，同时采用上游 Redis stream bridge 与安全 Docker socket overlay |
+
+### 没有原样保留差异的 12 个旧路径
+
+以下路径不再相对上游形成同样的 diff，但都经过逐项判断，并非遗漏：
+
+- `CLAUDE.md`、`backend/CLAUDE.md`：上游改为引用 `AGENTS.md`；MMKB 约束迁移到
+  根与 backend 的 `AGENTS.md` overlay。
+- `backend/.../config/agents_config.py`：上游已原生实现“目录必须有
+  `config.yaml` 才算用户级 agent”（含对应问题说明），不重复打补丁。
+- 旧 `memory/prompt.py`、`memory/storage.py`：上游删除并替换为可插拔 manager；
+  MMKB 的身份与 Artifact 不变量移植到 middleware、lead prompt、DeerMem prompt
+  和 sanitizer。
+- 旧 `test_memory_prompt_injection.py`、`test_memory_storage.py`、
+  `test_memory_upload_filtering.py`：对应旧模块已不存在，改由
+  `test_memory_artifact_sanitizer.py` 与 middleware 测试覆盖。
+- `test_gateway_services.py`：上游文件变化很大，MMKB 专属回归拆到
+  `test_mmkb_gateway_integration.py`，避免下次同步再次制造大冲突。
+- `test_subagent_executor.py`：旧断言依赖已改变的 Command/Runtime 形态；白名单
+  提取和 executor 参数传递由 `test_task_tool_core_logic.py` 与 MMKB 集成测试覆盖。
+- `backend/uv.lock`：MMKB 没有新增 Python dependency，采用上游最新 lock；
+  不保留仅由旧环境重算产生的大段 lock diff。
+- `frontend/AGENTS.md`：旧改动只是避免写死依赖版本，上游已重组该指南且不再
+  保留原来的固定版本段落。
+
+### 上游新增能力与 MMKB 的关系
+
+- 官方 Compose 现在包含 Redis 7，并通过
+  `DEER_FLOW_STREAM_BRIDGE_REDIS_URL` 自动启用跨 worker SSE stream bridge；
+  MMKB 分支没有自建另一套 Redis/MQ。
+- 上游新增 run ownership、checkpoint、scheduler、MCP task、token budget、
+  tool output budget、SkillActivation 等能力；`config.yaml` 已由 schema 11
+  升级到 36，旧配置键和值经语义比较无缺失、无改写，新增 27 个默认字段。
+- `config.yaml` 的 18 个自定义 tool 条目和 8 个 RAG tool 列表保持不变；
+  配置升级只补充缺失字段，不替换列表。
+
 ## Runtime Memory 文件
 
 相关文件：
@@ -815,7 +902,9 @@ git rm --cached .env
 |---|---|---|
 | `.deer-flow/agents/research-analyst/config.yaml` | 共享本地自定义 agent config | 定义 research analyst 的工具、模型和 skill |
 | `.deer-flow/agents/research-analyst/SOUL.md` | 共享本地自定义 agent 行为 | 让本地知识成为主要证据 |
-| `.env` | 本地 secret/config 值 | runtime provider keys 和内部 MMKB token；不应公开 |
+| `.dockerignore` | 排除 `.deer-flow/data`、`users`、`channels` runtime 数据 | 防止构建上下文泄漏状态并缩小镜像 |
+| `.env.example` | 阿里云 MaaS 等非密钥占位配置 | 记录可选模型环境变量，不含真实值 |
+| `AGENTS.md`、`backend/AGENTS.md`、`AGENTS_ZH.md` | 上游开发规范上的 MMKB overlay | 保护同步时必须保留的鉴权、RAG、身份、测试不变量 |
 | `Makefile` | 新增 `docker-restart-gateway` target | Gateway/tool/config 改动后快速重启 |
 | `README.md` | 新增 MMKB 集成说明 | 记录 proxy context/token 交接 |
 | `backend/.deer-flow/agents/research-analyst/config.yaml` | backend runtime agent config 拷贝 | 容器/backend 可见的 agent 定义 |
@@ -824,14 +913,19 @@ git rm --cached .env
 | `backend/.deer-flow/users/default/agents/research-analyst/config.yaml` | default-user agent config 拷贝 | legacy/default 本地 runtime 支持 |
 | `backend/.deer-flow/users/default/agents/research-analyst/SOUL.md` | default-user SOUL 拷贝 | legacy/default 本地 runtime 支持 |
 | `backend/.deer-flow/users/default/agents/research-analyst/memory.json` | default-user memory | 本地状态；可选是否版本化 |
-| `backend/CLAUDE.md` | 新增 MMKB proxy 集成说明 | 给后续贡献者提供上下文 |
+| `backend/Dockerfile` | `UV_HTTP_TIMEOUT` 构建参数 | 弱网/镜像源环境下提高依赖安装稳定性 |
+| `backend/app/gateway/auth_middleware.py`、`backend/app/gateway/internal_auth.py` | internal artifact owner header | 让 MMKB 代理下载 Artifact 时进入正确的用户目录，同时只在 artifact route 生效 |
 | `backend/app/gateway/authz.py` | 新增 MMKB proxy run-create bypass | 允许 MMKB 已鉴权 run 在无 DeerFlow UI auth 下创建 |
-| `backend/app/gateway/services.py` | 新增 MMKB context merge 和 runtime user 解析 | workspace+user memory 隔离 |
-| `backend/packages/harness/deerflow/config/agents_config.py` | fallback 只要求用户级 `config.yaml` 存在 | 共享 agent 定义、用户级 memory |
-| `backend/packages/harness/deerflow/agents/memory/storage.py` | 自动补全不完整的 memory JSON 结构 | 避免 `{}` 导致长期 memory 更新失败 |
-| `backend/packages/harness/deerflow/agents/middlewares/memory_middleware.py` | 从 runtime context 解析 memory user id | 后台更新保持 workspace+user 隔离 |
+| `backend/app/gateway/services.py` | MMKB context merge、租户模型和 runtime owner 解析 | workspace+user 隔离，且 API key 不进入 checkpoint |
+| `backend/packages/harness/deerflow/agents/memory/artifact_sanitizer.py` | 递归清洗长期记忆中的临时 Artifact 能力链接 | 避免未来 thread 错误复用旧路径/签名 URL |
+| `backend/packages/harness/deerflow/agents/middlewares/memory_middleware.py` | 从 runtime context 解析 user 并在 manager 写入前清洗 | 后台更新保持 workspace+user 隔离 |
+| `backend/packages/harness/deerflow/agents/lead_agent/prompt.py` | 注入历史 memory 前二次清洗 | 兼容升级前已有脏数据 |
+| `backend/packages/harness/deerflow/agents/memory/backends/deermem/deermem/core/prompts/memory_update.chat.yaml` | DeerMem 写入规则补充 | 禁止存短期路径、签名 URL、token |
 | `backend/packages/harness/deerflow/tools/builtins/task_tool.py` | 白名单提取父运行时的 MMKB 鉴权与身份上下文 | 子 Agent 的 RAG 工具继续使用同一 workspace 权限 |
 | `backend/packages/harness/deerflow/subagents/executor.py` | 将白名单运行时值合并进 delegated run | 避免子 Agent 调用 MMKB 时因 bearer 丢失而 `401` |
+| `backend/packages/harness/deerflow/subagents/builtins/general_purpose.py` | 中间研究文件交付协议 | 长研究任务用文件交接，避免仅靠最终消息承载全文 |
+| `backend/packages/harness/deerflow/tools/builtins/report_active_skill_tool.py`、`backend/packages/harness/deerflow/tools/builtins/__init__.py`、`backend/packages/harness/deerflow/tools/tools.py` | 注册 Skill 状态汇报工具 | 让模型选择研究 Skill 后向前端报告 |
+| `backend/packages/harness/deerflow/runtime/journal.py`、`backend/packages/harness/deerflow/runtime/runs/worker.py` | 最终回复资源校验 trace 与 public origin 注入 | 对最终链接做脱敏聚合观测 |
 | `backend/packages/harness/deerflow/tools/custom/__init__.py` | custom tools package marker | MMKB tools import path |
 | `backend/packages/harness/deerflow/tools/custom/rag/__init__.py` | RAG tools package marker | MMKB tools import path |
 | `backend/packages/harness/deerflow/tools/custom/rag/context.py` | MMKB 工具静态设置和请求级身份上下文解析 | 集中处理 bearer、public URL、base URL 和 timeout |
@@ -846,19 +940,29 @@ git rm --cached .env
 | `backend/tests/test_mmkb_asset_tools.py` | 视觉资产紧凑目录和精确详情工具测试 | 保护分页、字段裁减、完整 URL 和单项筛选行为 |
 | `backend/tests/test_mmkb_links.py` | MMKB 阶段 4 链接处理测试 | 保护绝对化、漏签检测和无敏感内容聚合日志 |
 | `backend/tests/test_mmkb_tools_contract.py` | 8 个工具的 service 委派与 schema 契约测试 | 防止重构或新增 transport 时改变公开工具行为 |
+| `backend/tests/test_mmkb_gateway_integration.py` | internal admission、owner、租户模型、子 Agent 白名单测试 | 保护跨系统信任边界和新版配置索引 |
+| `backend/tests/test_memory_artifact_sanitizer.py`、`test_memory_middleware_user_context.py` | 新版 Memory Manager 适配测试 | 保护用户隔离与链接清洗 |
+| `backend/tests/test_run_journal.py` | 最终回复资源 URL trace 测试 | 保护只校验 lead final、跳过 tool-call/subagent 中间消息 |
+| `backend/tests/test_task_tool_core_logic.py` | 子 Agent MMKB allowlist 测试 | 防止复制无关 secret 或遗漏 bearer/identity |
+| `backend/tests/test_report_active_skill_tool.py` | Skill 状态工具测试 | 保护事件格式和注册行为 |
 | `backend/tests/test_custom_agent.py` | fallback 测试 | 保护共享 agent/用户级 memory 行为 |
-| `config.yaml` | 本地 runtime 配置 | 注册 MMKB tools 和全局可选模型 allowlist；租户自定义模型由 MMKB 运行时传入，不写入此文件；同时将 run events 持久化到数据库以控制 Gateway 内存增长 |
-| `docker/docker-compose-dev.yaml` | 移除空 token override | 保留 `.env` 中的内部 auth token |
+| `config.yaml` | schema 36 的本地 runtime 配置 | 注册 8 个 RAG tool、研究模型与 Agent 配置；租户 API key 只在单次 run 内使用 |
+| `config.yaml.bak.20260713000036` | 历史配置快照 | 仅用于人工对照，不是 runtime 输入 |
+| `docker/docker-compose-dev.yaml` | Redis、监控 profile、UV 镜像源/超时与内部 token 交接 | 采用上游跨 worker stream bridge，同时保留 MMKB 本地运维能力 |
+| `docker/provisioner/Dockerfile` | 国内 apt mirror 示例修正 | 部署文档一致性 |
 | `docs/deploy.md` | MMKB 集成版 DeerFlow 最简部署指南 | 说明 `.env`、内部认证检查和 Docker 启动步骤 |
 | `docs/MMKB_AGENT_OUTPUT_COMPARISON.md` | DeerFlow 前端与 MMKB Agent Mode 输出对比 | 记录事件转换、Artifact 和通用 OpenAI 客户端展示边界 |
 | `docs/MMKB_AGENT_STORAGE_AND_OOM_TROUBLESHOOTING.md` | 存储配置、SSE 未结束和 OOM 专项排查 | 记录存储配置边界、`on_disconnect`、stream bridge、事件体积和取证建议 |
 | `docs/MMKB_URL_LIFECYCLE.md` | RAG URL 生命周期和视觉资产两阶段读取说明 | 区分媒体签名、阶段 4 绝对化、模型输出和 artifact 链路 |
 | `docs/README.md` | DeerFlow 本地文档索引 | 区分当前说明、历史记录、专项审查和计划文档 |
+| `docs/CONFIG_YAML_REFERENCE.md`、`docs/DEEP_RESEARCH_USAGE_LOGIC.md`、`docs/MEMORY_IMPLEMENTATION.md`、`docs/RESEARCH_AGENT_GENERALITY_REVIEW.md` | 配置、研究流程、Memory 与通用性专项文档 | 为调试和面试准备保留代码级依据 |
+| `docs/MMKB_INTEGRATION_CHANGES.md` | 本文档与上游同步审计 | 特色改动 source of truth |
 | `extensions_config.json` | 禁用状态的 MCP extension skeleton | 本地 extension 配置 |
-| `monitor/server.py`、`monitor/static/index.html`、`monitor/Dockerfile` | 可选 Compose 运行监控 | 本地观察容器内存趋势和脱敏 MMKB 资源校验事件 |
-| `scripts/docker.sh` | 加载 `.env`、默认镜像源、gateway restart 命令 | 可靠的本地 Docker 工作流 |
+| `monitor/server.py`、`monitor/static/index.html`、`monitor/Dockerfile`、`monitor/requirements.txt` | 可选 Compose 运行监控 | 本地观察容器内存趋势和脱敏 MMKB 资源校验事件 |
+| `scripts/docker.sh`、`scripts/check_deerflow_internal_auth.sh` | 加载环境、启动前 token 预检、gateway restart | 可靠的本地 Docker 工作流与 MMKB/DeerFlow 密钥一致性检查 |
 | `skills/custom/local-deep-research/SKILL.md` | 本地研究 workflow skill | 系统化 MMKB 文档研究 |
 | `skills/custom/local-systematic-literature-review/SKILL.md` | 本地系统性文献综述 workflow skill | 基于 MMKB 多文档做 SLR、survey 和 annotated bibliography |
+| `skills/public/ppt-generation/SKILL.md` | PPT 生成交付细则 | 与研究型 Agent 的文件交付约束一致 |
 
 ## 部署建议
 
@@ -891,16 +995,22 @@ make docker-start
 
 ## Rebase / 升级注意事项
 
-拉取新的上游 DeerFlow 改动时，需要重点检查这些区域：
+拉取新的上游 DeerFlow 改动时，不能只看冲突文件。先用 merge-base、提交清单和
+路径清单建立审计基线，再检查这些高风险区域：
 
 - `backend/app/gateway/authz.py`：permission decorator / auth flow 可能变化。
 - `backend/app/gateway/services.py`：run creation 和 context merge 可能变化。
-- `backend/packages/harness/deerflow/config/agents_config.py`：agent path
-  resolution 可能变化。
+- `backend/app/gateway/auth_middleware.py`、`internal_auth.py`：internal owner
+  和 artifact route 可能变化。
+- `backend/packages/harness/deerflow/agents/memory/`：Memory Manager/backend
+  边界可能变化，不能恢复已删除的旧 storage 实现。
+- `backend/packages/harness/deerflow/subagents/`：子 Agent RuntimeConfig 和
+  context 形态可能变化。
 - `backend/packages/harness/deerflow/tools/`：custom tool import path 可能变化。
 - `docker/docker-compose-dev.yaml` 和 `scripts/docker.sh`：compose env 和
   project-root 处理可能变化。
-- `config.yaml`：上游 config schema 可能变化。
+- `config.yaml`：上游 config schema 可能变化；升级后必须做语义 diff，不能只看
+  YAML 文本 diff。
 
 rebase 后验证：
 
@@ -924,3 +1034,8 @@ docker logs --tail 100 deer-flow-gateway
 - memory 写入预期的 `mmkb-<workspace>-<user>` user bucket；
 - 新生成的 `/mnt/user-data/outputs/*` 文件能通过 MMKB 签名 artifact 链接下载；
 - MMKB/OpenWebUI 路径中没有 `401`、`403` 或 CSRF 错误。
+
+本次同步还确认：上游 `test_auth_middleware.py` 与
+`test_subagent_executor.py` 在当前容器测试环境中有独立的等待超时（单用例也可
+复现），它们不是断言失败。MMKB 专属的纯单元/契约回归应单独运行并记录通过数，
+避免把“pytest 被 timeout 杀掉”误报成全部通过。

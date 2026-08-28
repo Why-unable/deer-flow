@@ -193,7 +193,7 @@ alt、`page_id`、`block_id`、`asset_type`、`ocr.content` 和
 最后阶段依靠预置提示词引导大模型优先使用工具返回的 `document_url`、`image_url`
 等现成 URL，并逐字保留这些 URL，避免权限损坏和死链。
 
-*   文件：`deer-flow/.deer-flow/agents/research-analyst/SOUL.md` 
+*   文件：`deer-flow/.deer-flow/agents/research-analyst/SOUL.md`
     *   要求面向用户的本地文档链接优先使用工具返回的 `document_url`，来源引用优先写成 `[文档标题](document_url)`。
 *   文件：`deer-flow/skills/custom/local-deep-research/SKILL.md`
     *   要求中间文件和 subagent 结构化结果保留 `document_id`、标题和 `document_url`，最终本地证据引用优先使用 Markdown 链接。
