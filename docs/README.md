@@ -52,6 +52,13 @@
 | [`superpowers/specs/2026-04-11-runjournal-history-evaluation.md`](./superpowers/specs/2026-04-11-runjournal-history-evaluation.md) | 使用 RunJournal / event store 替代 checkpoint history messages 的方案评估。 |
 | [`superpowers/specs/2026-04-11-summarize-marker-design.md`](./superpowers/specs/2026-04-11-summarize-marker-design.md) | 在历史记录中展示 summarization 标记的设计与验证说明。 |
 
+## 优化提升方向
+
+| 文档 | 简介 |
+|---|---|
+| [`optimization/README.md`](./optimization/README.md) | 记录当前 MMKB 集成版 DeerFlow 的后续工程优化方向。 |
+| [`optimization/MMKB_VISUAL_ASSET_BRIDGE.md`](./optimization/MMKB_VISUAL_ASSET_BRIDGE.md) | 规划将 MMKB 图片按需下载到 DeerFlow sandbox，并复用 `view_image` 完成视觉模型分析。 |
+
 ## 验证证据
 
 `pr-evidence/` 保存用于 PR 或功能验证的截图：

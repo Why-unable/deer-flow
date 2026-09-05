@@ -69,3 +69,8 @@ config.yaml.bak
 
 # Monocle agent-observability trace output (local file exporter)
 .monocle/
+
+# Local resume-preparation notes; keep these outside the project history.
+MMKB_DeerFlow_项目经历底稿.md
+后续统一模型管理的长期结构.md
+部署落地需求分析.md

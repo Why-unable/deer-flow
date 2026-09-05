@@ -34,7 +34,7 @@ MMKB 仍然负责用户和 workspace 鉴权。DeerFlow 接收一个来自 MMKB
 - 让后端、工具、配置改动后的本地 Docker 重启和开发流程更方便。
 
 用户可见链接的完整生成、签名、鉴权、下载和排障说明见同级 MMKB 项目中的
-`docs/LINK_DELIVERY.md`。DeerFlow 侧的 RAG 资源 URL 阶段划分、阶段 4
+`docs/对话链接生成与交付.md`。DeerFlow 侧的 RAG 资源 URL 阶段划分、阶段 4
 聚合日志和视觉资产两阶段读取说明见 `docs/MMKB_URL_LIFECYCLE.md`。
 
 ### 运行事件持久化
@@ -53,6 +53,18 @@ Gateway 进程内存中。
 
 - checkpoint 保存 LangGraph thread 的可恢复执行状态；
 - run event 保存一次 run 的消息、工具结果、执行轨迹和 token 统计。
+
+仓库根 `config.yaml` 继续以 SQLite 作为 DeerFlow 独立开发时的低门槛默认值。
+MMKB 的统一 Docker/Windows 发行脚本会生成运行时配置副本，并把该副本的
+`database.backend` 固定为 `postgres`、`postgres_url` 固定为 `$DATABASE_URL`。
+MMKB 与 DeerFlow 共用一个 PostgreSQL server/container，但使用不同 database 和
+login role；DeerFlow 不会获得 MMKB/Django database 的凭据。
+
+旧 MMKB 发行版的 `.deer-flow/data/deerflow.db` 同时包含 SQLAlchemy 业务表和
+LangGraph checkpoints。升级迁移必须复制这两个数据域；只创建空 PostgreSQL schema
+会丢失历史 thread 的恢复状态。迁移成功后旧 SQLite 文件仍保留作回滚材料，但不再是
+活动数据库。备份也分别保存 DeerFlow PostgreSQL dump 与 `DEER_FLOW_HOME` 中的
+memory、artifact、Agent 定义和配置。
 
 `max_trace_content: 10240` 只限制写入数据库的单条 trace 内容大小；
 `track_token_usage: true` 保留各类 Agent 的 token 用量统计。
@@ -82,8 +94,11 @@ MMKB 先鉴权外部客户端，然后调用 DeerFlow Gateway，并传入：
 - `context.mmkb_workspace_id`、`context.mmkb_user_id`、
   `context.mmkb_tenant_id`：MMKB 已鉴权后的身份元数据；
 - `context.model_name` 与可选的 `context.mmkb_model_config`：当 MMKB
-  租户配置了完整的 OpenAI-compatible Chat LLM 时，MMKB 会把
-  `model/base_url/api_key` 作为本次 run 的运行时模型配置传入；
+  租户从自己的启用模型中选择了支持工具调用的 OpenAI-compatible Chat LLM 时，
+  MMKB 会在服务端解析 `tenant:<UUID>` 选择器，并把
+  `model/base_url/api_key`、视觉/思考能力作为本次 run 的运行时模型配置传入；
+  选择器无效、模型停用、配置不完整或未声明工具调用能力时由 MMKB 直接拒绝，
+  不会用平台模型或密钥静默回退；
 - `X-DeerFlow-Internal-Token`：共享内部密钥；
 - 匹配的 CSRF header/cookie 对。
 
@@ -258,8 +273,10 @@ workspace 权限的文档详情页面。
   (`api_document_detail_urls`)；结构化工具结果中的 `md_asset_base` 作为 API 元数据
   基路径处理，不计为未签名媒体 URL；只记录计数和原因，不记录完整 URL、token
   或文档 ID。
-- Base URL 来自每个工具的 `base_url` 配置，默认是
-  `http://host.docker.internal:8000`，用于 Docker 容器访问宿主机上的 MMKB。
+- Base URL 来自每个工具的 `base_url` 配置。当前仓库配置为
+  `http://host.docker.internal`，用于 Docker 容器通过宿主机 80 端口访问统一
+  MMKB Nginx 入口。若使用宿主机 Django 开发服务或跨机器部署，应改成容器
+  实际可达的地址，例如 `http://host.docker.internal:8000`。
 - runtime 中的 `public_base_url` 优先用于把返回 URL 绝对化。
 - runtime 中的 `mmkb_bearer_token` 会作为 `Authorization` header。
 - Gateway 合并 MMKB 代理传入的 run context 时输出
@@ -355,13 +372,15 @@ tools:
   - name: rag_search
     group: knowledge
     use: deerflow.tools.custom.rag.tools:rag_search_tool
-    base_url: http://host.docker.internal:8000
+    base_url: http://host.docker.internal
+    public_base_url_fallback: http://rag.mmkb
     timeout: 30
 ```
 
-8 个 RAG 工具都采用同样的注册模式。`public_base_url_fallback` 仍是工具支持的
-可选保险丝，但当前默认配置不写固定公网域名；正常情况下应由 MMKB 请求上下文
-传入 `public_base_url`。
+8 个 RAG 工具都采用同样的注册模式。当前配置使用内部别名
+`http://rag.mmkb` 作为 `public_base_url_fallback` 保险丝；它不是通用公网地址。
+正常的 MMKB Agent 请求仍应由 MMKB 请求上下文传入本轮真实的
+`public_base_url`，只有该值缺失时才会使用 fallback。
 
 ## MMKB Agent 输出适配
 
@@ -503,11 +522,13 @@ SOUL 行为：
 
 这个 skill 定义了本地知识库问题的研究流程。
 
-它的边界是普通本地深度研究：回答一个具体问题、解释一个主题、
-分析某个概念/系统/文档集，或生成基于本地证据的研究回答。
-如果用户明确要求系统性文献综述、survey、annotated bibliography、
-多篇论文/报告的跨文档方法比较、纳入/排除筛选或证据矩阵，应使用
-`local-systematic-literature-review`。
+它的边界是普通本地知识研究：回答一个具体问题、解释一个主题、
+分析某个概念/系统/文档集，或生成不要求穷尽全部相关文档的研究回答。
+如果用户要求深度/完整研究报告、基于全部相关本地文档的报告、研究趋势、
+主题综合、系统性文献综述、survey、annotated bibliography、多篇论文/报告的
+跨文档方法比较、纳入/排除筛选或证据矩阵，应使用
+`local-systematic-literature-review`。具体触发边界以两个 Skill 自己的
+frontmatter 和“何时使用”章节为准。
 
 主要指导：
 
@@ -547,11 +568,14 @@ SOUL 行为：
 `arxiv_search.py`；事实来源限定为 MMKB 本地知识库。
 
 它和 `local-deep-research` 的区别是：`local-deep-research` 用于围绕一个
-具体问题做本地深度研究；`local-systematic-literature-review` 用于构建
-多文档集合、筛选来源、抽取统一字段并做跨文档主题综合。
+具体问题做普通本地知识研究；`local-systematic-literature-review` 用于完整
+深度研究报告以及需要构建多文档集合、筛选来源、抽取统一字段并做跨文档主题
+综合的任务。
 
 适用场景：
 
+- 基于全部或所有相关本地文档生成深度/完整研究报告；
+- 分析本地文档集合中的研究趋势或做主题综合；
 - 明确要求基于本地知识库做系统性文献综述；
 - 对本地多篇论文、标准、报告或白皮书做 survey；
 - 生成 annotated bibliography；
@@ -616,8 +640,9 @@ SOUL 行为：
 `config.yaml` 是完整的本地 runtime 配置。与集成相关的部分包括：
 
 - model allowlist 默认来自 `config.yaml` `models:`。MMKB 显式选择
-  registry 模型时仍要求该 `context.model_name` 能在 DeerFlow 配置中解析；
-  如果请求携带 MMKB 租户的 `context.mmkb_model_config`，Gateway 会先构造
+  平台 registry 模型时仍要求该 `context.model_name` 能在 DeerFlow 配置中解析；
+  租户模型不需要写入静态 `config.yaml`。如果请求携带 MMKB 租户的
+  `context.mmkb_model_config`，Gateway 会先构造
   单次 run 的 AppConfig 副本并把该模型加入副本，再执行 allowlist 校验；
 - model provider 使用 `CHAT_COMPLETION_API_KEY` 或
   `MULTIMODAL_EMBED_API_KEY`；
@@ -903,6 +928,7 @@ git rm --cached .env
 | `.deer-flow/agents/research-analyst/config.yaml` | 共享本地自定义 agent config | 定义 research analyst 的工具、模型和 skill |
 | `.deer-flow/agents/research-analyst/SOUL.md` | 共享本地自定义 agent 行为 | 让本地知识成为主要证据 |
 | `.dockerignore` | 排除 `.deer-flow/data`、`users`、`channels` runtime 数据 | 防止构建上下文泄漏状态并缩小镜像 |
+| `.gitignore` | 排除本地简历准备与部署分析文档 | 保持面试材料在工作区可用，但不进入项目历史；不影响 runtime |
 | `.env.example` | 阿里云 MaaS 等非密钥占位配置 | 记录可选模型环境变量，不含真实值 |
 | `AGENTS.md`、`backend/AGENTS.md`、`AGENTS_ZH.md` | 上游开发规范上的 MMKB overlay | 保护同步时必须保留的鉴权、RAG、身份、测试不变量 |
 | `Makefile` | 新增 `docker-restart-gateway` target | Gateway/tool/config 改动后快速重启 |
@@ -1035,7 +1061,8 @@ docker logs --tail 100 deer-flow-gateway
 - 新生成的 `/mnt/user-data/outputs/*` 文件能通过 MMKB 签名 artifact 链接下载；
 - MMKB/OpenWebUI 路径中没有 `401`、`403` 或 CSRF 错误。
 
-本次同步还确认：上游 `test_auth_middleware.py` 与
-`test_subagent_executor.py` 在当前容器测试环境中有独立的等待超时（单用例也可
-复现），它们不是断言失败。MMKB 专属的纯单元/契约回归应单独运行并记录通过数，
-避免把“pytest 被 timeout 杀掉”误报成全部通过。
+本次同步还确认：上游 `test_auth_middleware.py`、
+`test_subagent_executor.py` 以及 `test_custom_agent.py` 的 TestClient API 用例
+在当前容器测试环境中有独立的等待超时（单用例也可复现），它们不是断言失败。
+MMKB 专属的纯单元/契约回归应单独运行并记录通过数，避免把“pytest 被 timeout
+杀掉”误报成全部通过。
